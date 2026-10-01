@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>Eg2.Asura</RootNamespace>
+    <AssemblyName>Eg2.Asura</AssemblyName>
+  </PropertyGroup>
+</Project>

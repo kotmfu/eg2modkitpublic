@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>Eg2.ModKit</RootNamespace>
+    <AssemblyName>Eg2.ModKit</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Eg2.Asura\Eg2.Asura.csproj" />
+    <EmbeddedResource Include="..\..\reference\golden.json" LogicalName="golden.json" />
+    <EmbeddedResource Include="data\agents.json" LogicalName="agents.json" Condition="Exists('data\agents.json')" />
+  </ItemGroup>
+</Project>

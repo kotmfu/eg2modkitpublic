@@ -1,0 +1,6 @@
+/out/
+modkit/**/bin/
+modkit/**/obj/
+modkit/.vs/
+*.user
+__pycache__/

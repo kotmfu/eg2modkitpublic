@@ -1,0 +1,16 @@
+LIBRARY xinput1_4
+EXPORTS
+    XInputGetState=s_XInputGetState @2
+    XInputSetState=s_XInputSetState @3
+    XInputGetCapabilities=s_XInputGetCapabilities @4
+    XInputEnable=s_XInputEnable @5
+    XInputGetBatteryInformation=s_XInputGetBatteryInformation @7
+    XInputGetKeystroke=s_XInputGetKeystroke @8
+    XInputGetAudioDeviceIds=s_XInputGetAudioDeviceIds @10
+    o100=s_o100 @100 NONAME
+    o101=s_o101 @101 NONAME
+    o102=s_o102 @102 NONAME
+    o103=s_o103 @103 NONAME
+    o104=s_o104 @104 NONAME
+    o108=s_o108 @108 NONAME
+    o109=s_o109 @109 NONAME

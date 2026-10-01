@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="src/Eg2.Asura/Eg2.Asura.csproj" />
+  <Project Path="src/Eg2.ModKit/Eg2.ModKit.csproj" />
+  <Project Path="src/Eg2.ModManager/Eg2.ModManager.csproj" />
+  <Project Path="src/Eg2.ModInstaller/Eg2.ModInstaller.csproj" />
+</Solution>
