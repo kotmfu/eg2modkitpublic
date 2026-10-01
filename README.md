@@ -1,9 +1,6 @@
 # Eg2 ModKit
 
 A mod manager and mod-making toolkit for **Evil Genius 2: World Domination**
-(Rebellion, 2021). The game runs on Rebellion's in-house Asura engine. It has no
-official mod support and no SDK, so everything here was worked out from a retail
-install. See [docs/RESEARCH.md](docs/RESEARCH.md) for how.
 
 ## What it does
 
