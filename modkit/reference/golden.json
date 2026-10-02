@@ -1,0 +1,47 @@
+{
+  "zlib4k": {
+    "empty": {
+      "len": 8,
+      "sha256": "012af6e29b83ef2e57110415d3f9cd25c49f8665bbacce4f026912bca74aea29"
+    },
+    "one": {
+      "len": 9,
+      "sha256": "5bd3709c3e4aabf6ed8f8d1792684a6c545fe231f7f8e5b290b2e355b37f052c"
+    },
+    "fox": {
+      "len": 127,
+      "sha256": "5a23a3d240d282f36a613894974c9d3438cb190bcc64dc5be2263e03a7307a64"
+    },
+    "lcg": {
+      "len": 4416,
+      "sha256": "0b81a4d5a93f41520020b90d6e849709c74fef5d52144ec32094cfb460c1e3a9"
+    },
+    "mixed": {
+      "len": 4535,
+      "sha256": "3a126252d61892b57e1a09fba33ddfeac42f07d036ef9c62f4eb7912611257b7"
+    }
+  },
+  "zbb": {
+    "mixed_block4096": {
+      "block": 4096,
+      "len": 4764,
+      "sha256": "0600868601d857c04eda26875e45c400ea2cd716e5088741d963dc8dac5b7a98"
+    },
+    "fox_block2M": {
+      "block": 2097152,
+      "len": 151,
+      "sha256": "f411af978c0d0b5ed97d1895a227eacc9eb18ec8e5bd72e6bdd46f959d3f796d"
+    }
+  },
+  "key_hash": {
+    "FE_NEW_GAME": "0x0b906ab1",
+    "HEALTHSMARTSRESTORE_01_NRM_NAME": "0xe9478348",
+    "EVILBUNK_NAME": "0x796b0906",
+    "ROOM": "0x003580db"
+  },
+  "inputs": {
+    "fox": "'The quick brown fox jumps over the lazy dog. ' x200 (ASCII)",
+    "lcg": "5000 bytes: x=(x*1103515245+12345)&0x7fffffff from seed 12345; byte=0x41+((x>>16)&0xF)",
+    "mixed": "lcg + fox"
+  }
+}

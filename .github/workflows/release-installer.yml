@@ -1,0 +1,58 @@
+name: Release Mod Installer
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - modkit/**
+      - '!modkit/src/Eg2.ModManager/**'
+      - '!modkit/tools/**'
+      # the installer compiles these two ModManager files in
+      - modkit/src/Eg2.ModManager/Theme.cs
+      - modkit/src/Eg2.ModManager/TweaksPanel.cs
+      - .github/workflows/release-installer.yml
+
+permissions:
+  contents: write
+
+concurrency: release-installer
+
+jobs:
+  release:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Build xinput1_4.dll proxy
+        shell: cmd
+        run: modkit\native\winmm\build.cmd
+
+      - name: Publish
+        run: dotnet publish modkit/src/Eg2.ModInstaller -p:PublishProfile=FolderProfile -o out
+
+      - name: Next version
+        id: ver
+        run: |
+          last=$(git tag -l 'mi-*' --sort=-v:refname | head -1)
+          IFS=. read -r major minor patch <<< "${last#mi-}"
+          v="${major:-1}.${minor:-0}.$(( ${patch:--1} + 1 ))"
+          echo "v=$v" >> "$GITHUB_OUTPUT"
+
+      - name: Package
+        run: cd out && 7z a "../eg2modinstallerv${{ steps.ver.outputs.v }}.7z" Eg2ModInstaller.* Eg2.*.dll runtime -x!*.pdb
+
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >
+          gh release create "mi-${{ steps.ver.outputs.v }}" "eg2modinstallerv${{ steps.ver.outputs.v }}.7z"
+          --target "$GITHUB_SHA" --title "EG2 Mod Installer V${{ steps.ver.outputs.v }}" --notes "TBD"
