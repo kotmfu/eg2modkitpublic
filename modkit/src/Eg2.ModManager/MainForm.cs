@@ -87,6 +87,11 @@ sealed partial class MainForm : Form
             "Pick an item on the left to see what using it does to a minion: + restores the stat, - drains it. Type a new value in \"Your value\", " +
             "clear it to go back to the game's. Changed items are bold. Saved in the \"Quick tweaks\" mod.",
             QuickTweaks.FurnitureEffects));
+        _tabs.TabPages.Add(TweakGridPage("Temperature",
+            "Lair temperature. Furniture: heat (+) or cold (-) each item gives off. Story: steps that shift the whole lair. Bands: the temperature range each " +
+            "level (Freezing … Melting) covers. Traits: what minions and agents get on those tiles. " +
+            "Type a new value in \"Your value\", clear it to go back to the game's. To switch temperature off entirely, use the tick box in Quick tweaks. Saved in the \"Quick tweaks\" mod.",
+            QuickTweaks.Temperature));
         _tabs.TabPages.Add(_furniturePage = FurniturePage());
         _tabs.TabPages.Add(_treesPage = TreesPage());
         _tabs.TabPages.Add(_mapsPage = MapsPage());

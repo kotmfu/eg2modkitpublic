@@ -25,15 +25,18 @@ public sealed class Tweak
     // exactly one of these
     public RuntimePatch? Runtime { get; init; }
     public FieldEdit? Field { get; init; }
+    /// <summary>Fixed field edits switched on and off together (values preset).</summary>
+    public List<FieldEdit>? Fields { get; init; }
     /// <summary>A video under the game folder to skip (on/off).</summary>
     public string? Video { get; init; }
 
     public bool IsIn(ModDefinition m) => Video is not null ? m.SkipVideos.Contains(Video, StringComparer.OrdinalIgnoreCase)
+        : Fields is not null ? m.FieldEdits.Any(InFields)
         : Runtime is not null
         ? m.Runtime.Any(r => r.Name.Equals(Runtime.Name, StringComparison.OrdinalIgnoreCase))
         : m.FieldEdits.Any(Same);
 
-    public string? ValueIn(ModDefinition m) => Video is not null ? (IsIn(m) ? "1" : null)
+    public string? ValueIn(ModDefinition m) => Video is not null || Fields is not null ? (IsIn(m) ? "1" : null)
         : Runtime is not null
         ? m.Runtime.FirstOrDefault(r => r.Name.Equals(Runtime.Name, StringComparison.OrdinalIgnoreCase))?.Value
         : m.FieldEdits.FirstOrDefault(Same)?.Value;
@@ -42,6 +45,7 @@ public sealed class Tweak
     {
         if (Video is not null) m.SkipVideos.RemoveAll(v => v.Equals(Video, StringComparison.OrdinalIgnoreCase));
         else if (Runtime is not null) m.Runtime.RemoveAll(r => r.Name.Equals(Runtime.Name, StringComparison.OrdinalIgnoreCase));
+        else if (Fields is not null) m.FieldEdits.RemoveAll(InFields);
         else m.FieldEdits.RemoveAll(Same);
         if (Key == "minion_hard_cap")
         {
@@ -65,19 +69,25 @@ public sealed class Tweak
         Remove(m);
         if (Video is not null) m.SkipVideos.Add(Video);
         else if (Runtime is not null) { var r = Runtime.Copy(); r.Value = value; m.Runtime.Add(r); }
-        else
+        else if (Fields is not null)
         {
-            var f = Field!;
-            m.FieldEdits.Add(new FieldEdit
-            {
-                Package = f.Package, Tag = f.Tag, Object = f.Object, Offset = f.Offset, Type = f.Type,
-                Expect = f.Expect, Note = f.Note, Value = value,
-            });
+            m.FieldEdits.RemoveAll(e => Fields.Any(f => SameSlot(e, f)));   // manual values on the same slots give way
+            m.FieldEdits.AddRange(Fields.Select(f => Copy(f, f.Value)));
         }
+        else m.FieldEdits.Add(Copy(Field!, value));
         if (Key == "minion_hard_cap") { var ui = CapUi.Copy(); ui.Value = value; m.Runtime.Add(ui); }
     }
 
-    bool Same(FieldEdit e) => Field is { } f && e.Package == f.Package && e.Tag == f.Tag && e.Object == f.Object && e.Offset == f.Offset;
+    static FieldEdit Copy(FieldEdit f, string value) => new()
+    {
+        Package = f.Package, Tag = f.Tag, Object = f.Object, Offset = f.Offset, Type = f.Type,
+        Expect = f.Expect, Note = f.Note, Value = value,
+    };
+
+    static bool SameSlot(FieldEdit e, FieldEdit f) => e.Package == f.Package && e.Tag == f.Tag && e.Object == f.Object && e.Offset == f.Offset;
+    bool Same(FieldEdit e) => Field is { } f && SameSlot(e, f);
+    /// <summary>One of this switch's own edits (same slot and preset value), so switching off keeps manual values there.</summary>
+    bool InFields(FieldEdit e) => Fields!.Any(f => SameSlot(e, f) && e.Value == f.Value);
 }
 
 public static class QuickTweaks
@@ -137,6 +147,127 @@ public static class QuickTweaks
             if (game.Objects.FirstOrDefault(o => o.Tag == "rcns" && o.Name == name && o.Body.Length > 45) is { } res)
                 list.Add(FieldTweak(res, "Intel and Tech", label, 41, "u32", Bytes.U32(res.Body, 41).ToString(),
                     "Most you can hold, for NEW games (a save keeps the cap it started with; use the \"existing saves\" setting for those)."));
+        if (NoTemperature(game) is { } temp) list.Add(temp);
+        return list;
+    }
+
+    /// <summary>
+    /// Oceans DLC lair temperature off. Temperature bands are rtlv objects: i32 min at +35, max at +39 (Freezing -128..-13,
+    /// Cold, Chilly, Neutral 0..0, Warm, Hot, Melting ..127; +43 f32 1/1.5/3 = likely the furniture wear multiplier). Every
+    /// temperature trait (stat drain, slow, agent immunity, "Comfortable") is an rtrt with "Enter/Exit a X Tile" parts
+    /// linking a band. Neutral is widened to every value and the other bands get min &gt; max, so no tile leaves Neutral;
+    /// the one trait that fires on Neutral ("Comfortable") is pointed at a dead band instead.
+    /// </summary>
+    static Tweak? NoTemperature(GameData game)
+    {
+        var bands = game.Objects.Where(o => o.Tag == "rtlv" && o.Body.Length >= 47).ToList();
+        var neutral = bands.FirstOrDefault(o => BitConverter.ToInt32(o.Body, 35) == 0 && BitConverter.ToInt32(o.Body, 39) == 0);
+        var dead = bands.FirstOrDefault(o => o != neutral);
+        if (neutral is null || dead is null) return null;   // no Oceans DLC, or the layout moved
+
+        var fields = new List<FieldEdit>();
+        void Edit(GameObject o, int at, string type, string value, string note) => fields.Add(new FieldEdit
+        {
+            Package = o.Package, Tag = o.Tag, Object = o.Key, Offset = at, Type = type, Value = value,
+            Expect = Convert.ToHexString(o.Body, at, 4), Note = note,
+        });
+        foreach (var b in bands)
+        {
+            bool n = b == neutral;
+            Edit(b, 35, "i32", n ? "-128" : "127", $"temperature off: {b.Name} band min");
+            Edit(b, 39, "i32", n ? "127" : "-128", $"temperature off: {b.Name} band max");
+        }
+        foreach (var t in game.Objects.Where(o => o.Tag == "rtrt"))
+            for (int i = 0; i + 4 <= t.Body.Length; i++)
+                if (Bytes.U32(t.Body, i) == neutral.ObjectId)
+                    Edit(t, i, "u32", Bytes.Hex(dead.ObjectId), $"temperature off: {t.Name} no longer fires on Neutral");
+        // the sources too, so every tile reads 0 (not just "neutral"): furniture output and story-wide offsets
+        foreach (var f in game.Objects.Where(o => o.Tag == "fntr"))
+            foreach (var at in TemperatureOutputs(f.Body).Where(at => BitConverter.ToInt32(f.Body, at) != 0))
+                Edit(f, at, "i32", "0", $"temperature off: {f.Name} gives off no heat/cold");
+        foreach (var (o, at) in TemperatureOffsets(game))
+            Edit(o, at, "i32", "0", $"temperature off: {o.Name} no longer shifts the lair's temperature");
+        return new Tweak
+        {
+            Key = "no_temperature", Group = "Lair", Label = "Turn off temperature", IsFlag = true, Default = "off", Fields = fields,
+            Help = "Every tile on every island stays at 0: furniture gives off no heat or cold, the Polar story no longer chills the lair, and minions, agents and furniture get no Cold/Hot/Freezing/Melting effects or \"Comfortable\" bonus.",
+        };
+    }
+
+    /// <summary>
+    /// Offsets of a furniture record's temperature outputs. The list is a prop [u32 n] + n entries, each a prop whose
+    /// first i32 is the output: 24 bytes ([v][0][1][2][1][2], e.g. Generator 4) or 40 (player-picked High/Medium/Low:
+    /// [v][band key][2 texts], e.g. Furnace 8/6/4). It always ends at 00000000 00000080 3F010001.
+    /// </summary>
+    public static List<int> TemperatureOutputs(byte[] b)
+    {
+        var tail = Bytes.Le(1u, 2u, 1u, 2u);
+        for (int i = 0; i + 13 <= b.Length; i++)
+        {
+            if (Bytes.U32(b, i) != 0x80000001 || b[i + 4] != 0) continue;
+            int size = (int)Bytes.U32(b, i + 5), end = i + 9 + size;
+            uint n = Bytes.U32(b, i + 9);
+            if (n is 0 or > 8 || end + 9 > b.Length || Bytes.U32(b, end) != 0 || Bytes.U32(b, end + 4) != 0x80000000 || b[end + 8] != 0x3f) continue;
+            var outs = new List<int>();
+            for (int e = i + 13; e < end && outs.Count < n; )
+            {
+                if (Bytes.U32(b, e) != 0x80000001 || b[e + 4] != 0) break;
+                int es = (int)Bytes.U32(b, e + 5);
+                if (es is not (24 or 40) || es == 24 && !b.AsSpan(e + 9 + 8, 16).SequenceEqual(tail)) break;
+                outs.Add(e + 9);
+                e += 9 + es;
+            }
+            if (outs.Count == n && outs[^1] - 9 + Bytes.U32(b, outs[^1] - 4) + 9 == end) return outs;
+        }
+        return new List<int>();
+    }
+
+    /// <summary>Story steps that shift the whole lair's temperature (Polar campaign; node 0xc3376493, its Offset fed by one i32 Value).</summary>
+    static IEnumerable<(GameObject Obj, int At)> TemperatureOffsets(GameData game)
+    {
+        foreach (var o in game.Objects.Where(o => o.Body.AsSpan().IndexOf(BitConverter.GetBytes(0xc3376493u)) >= 0))
+            if (ObjectInspector.Params(o).Where(p => p.Label == "Value" && p.Type == "i32").ToList() is [var p])
+                yield return (o, p.Offset);
+    }
+
+    /// <summary>Temperature by hand: bands (range, wear multiplier), furniture outputs, story offsets and the numbers in every trait a band triggers.</summary>
+    public static List<Tweak> Temperature(GameData game)
+    {
+        var inv = System.Globalization.CultureInfo.InvariantCulture;
+        var bands = game.Objects.Where(o => o.Tag == "rtlv" && o.Body.Length >= 47).OrderBy(o => BitConverter.ToInt32(o.Body, 35)).ToList();
+        string BandName(GameObject b) => b.Name.StartsWith("0x") ? "Neutral" : b.Name.Trim('"');
+        var list = new List<Tweak>();
+        foreach (var b in bands)
+        {
+            string item = $"Band: {BandName(b)}";
+            list.Add(FieldTweak(b, item, "Lowest temperature", 35, "i32", BitConverter.ToInt32(b.Body, 35).ToString(),
+                "A tile whose temperature is in this band's range gets its effects. Bands run -128..127 and shouldn't overlap."));
+            list.Add(FieldTweak(b, item, "Highest temperature", 39, "i32", BitConverter.ToInt32(b.Body, 39).ToString(),
+                "A tile whose temperature is in this band's range gets its effects. Bands run -128..127 and shouldn't overlap."));
+            list.Add(FieldTweak(b, item, "Furniture wear multiplier (unconfirmed)", 43, "f32", BitConverter.ToSingle(b.Body, 43).ToString("G6", inv),
+                "1 in the mild bands, 1.5 Cold/Hot, 3 Freezing/Melting; probably how much faster furniture wears out there."));
+        }
+        foreach (var f in game.Objects.Where(o => o.Tag == "fntr").OrderBy(o => Furniture(o.Name), StringComparer.OrdinalIgnoreCase))
+        {
+            var outs = TemperatureOutputs(f.Body);
+            for (int k = 0; k < outs.Count; k++)
+                list.Add(FieldTweak(f, $"Furniture: {Furniture(f.Name)}", outs.Count > 1 ? $"Output setting {k + 1} (High, Medium, Low)" : "Temperature output",
+                    outs[k], "i32", BitConverter.ToInt32(f.Body, outs[k]).ToString(), "Heat (+) or cold (-) this item gives off around it. 0 = none."));
+        }
+        foreach (var (o, at) in TemperatureOffsets(game))
+            list.Add(FieldTweak(o, $"Story: {o.Name}", "Lair temperature change", at, "i32", BitConverter.ToInt32(o.Body, at).ToString(),
+                "How much this story step shifts the whole lair's temperature (Polar campaign). 0 = none."));
+        var ids = bands.ToDictionary(b => b.ObjectId, BandName);
+        foreach (var t in game.Objects.Where(o => o.Tag == "rtrt"))
+        {
+            var used = new SortedSet<string>();
+            for (int i = 0; i + 4 <= t.Body.Length; i++) if (ids.TryGetValue(Bytes.U32(t.Body, i), out var n)) used.Add(n);
+            if (used.Count == 0) continue;
+            string item = $"Trait: {t.Name} ({string.Join(", ", used)}) {t.Key}";
+            foreach (var p in ObjectInspector.TraitValues(t).Where(p => !p.Label.StartsWith("Enter ") && !p.Label.StartsWith("Exit ")))
+                list.Add(FieldTweak(t, item, p.Label, p.Offset, p.Type, p.Value,
+                    "A number in the trait a minion or agent gets on these bands' tiles, named after the trait part it sits in. What each one does is unconfirmed."));
+        }
         return list;
     }
 
