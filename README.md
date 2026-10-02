@@ -20,7 +20,7 @@ A mod manager and mod-making toolkit for **Evil Genius 2: World Domination**
 Mods never change the game's own files. Instead ModKit writes `.asrpatch`
 override files, which the engine checks for next to every data file it opens.
 New content goes into the engine's empty development package slots. Runtime
-tweaks use a small `winmm.dll` proxy that edits game data in memory; it never
+tweaks use a small `xinput1_4.dll` proxy that edits game data in memory; it never
 patches game code.
 
 ## Requirements
@@ -28,7 +28,7 @@ patches game code.
 - Windows 10/11, x64
 - Evil Genius 2 (Steam)
 - [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0) to build
-- Visual Studio C++ build tools, only if you want to rebuild the `winmm.dll` proxy
+- Visual Studio C++ build tools, only if you want to rebuild the `xinput1_4.dll` proxy
 
 ## Build and run
 
