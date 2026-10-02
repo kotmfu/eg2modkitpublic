@@ -2,6 +2,10 @@
 
 A mod manager and mod-making toolkit for **Evil Genius 2: World Domination**
 
+## Quick start
+- **Using mods/quick tweaks:** Get the mod installer, it does both
+- **Creating mods:** Get the mod kit
+
 ## What it does
 
 - **Play:** quick tweaks, and installing or removing mods with one click.
