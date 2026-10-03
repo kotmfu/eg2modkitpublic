@@ -27,16 +27,22 @@ public sealed class Tweak
     public FieldEdit? Field { get; init; }
     /// <summary>Fixed field edits switched on and off together (values preset).</summary>
     public List<FieldEdit>? Fields { get; init; }
+    /// <summary>With <see cref="Fields"/> holding the game's own i32 values: a number that moves them all by
+    /// (value - <see cref="Default"/>), e.g. a limit written as both "&lt; 5" and "== 4" in the scripts.</summary>
+    public bool Shift { get; init; }
     /// <summary>A video under the game folder to skip (on/off).</summary>
     public string? Video { get; init; }
 
     public bool IsIn(ModDefinition m) => Video is not null ? m.SkipVideos.Contains(Video, StringComparer.OrdinalIgnoreCase)
-        : Fields is not null ? m.FieldEdits.Any(InFields)
+        : Fields is not null ? m.FieldEdits.Any(Shift ? InSlots : InFields)
         : Runtime is not null
         ? m.Runtime.Any(r => r.Name.Equals(Runtime.Name, StringComparison.OrdinalIgnoreCase))
         : m.FieldEdits.Any(Same);
 
-    public string? ValueIn(ModDefinition m) => Video is not null || Fields is not null ? (IsIn(m) ? "1" : null)
+    public string? ValueIn(ModDefinition m) => Shift
+        ? Fields!.Select(f => (f, e: m.FieldEdits.FirstOrDefault(e => SameSlot(e, f)))).FirstOrDefault(x => x.e is not null) is ({ } f0, { } e0)
+            ? (int.Parse(e0.Value) - int.Parse(f0.Value) + int.Parse(Default!)).ToString() : null
+        : Video is not null || Fields is not null ? (IsIn(m) ? "1" : null)
         : Runtime is not null
         ? m.Runtime.FirstOrDefault(r => r.Name.Equals(Runtime.Name, StringComparison.OrdinalIgnoreCase))?.Value
         : m.FieldEdits.FirstOrDefault(Same)?.Value;
@@ -45,13 +51,14 @@ public sealed class Tweak
     {
         if (Video is not null) m.SkipVideos.RemoveAll(v => v.Equals(Video, StringComparison.OrdinalIgnoreCase));
         else if (Runtime is not null) m.Runtime.RemoveAll(r => r.Name.Equals(Runtime.Name, StringComparison.OrdinalIgnoreCase));
-        else if (Fields is not null) m.FieldEdits.RemoveAll(InFields);
+        else if (Fields is not null) m.FieldEdits.RemoveAll(Shift ? InSlots : InFields);
         else m.FieldEdits.RemoveAll(Same);
         if (Key == "minion_hard_cap")
         {
             m.Runtime.RemoveAll(r => r.Name == CapUi.Name);
             m.TextEdits.RemoveAll(e => e.Key == "MAXIMUM_CAPS");   // the old "300+" workaround
         }
+        if (Key == "henchman_limit") m.HenchmanBarSlots = null;
     }
 
     /// <summary>The HUD's copy of the hard cap: the game copies it once at startup (`mov eax,[hardcap]` /
@@ -71,11 +78,14 @@ public sealed class Tweak
         else if (Runtime is not null) { var r = Runtime.Copy(); r.Value = value; m.Runtime.Add(r); }
         else if (Fields is not null)
         {
-            m.FieldEdits.RemoveAll(e => Fields.Any(f => SameSlot(e, f)));   // manual values on the same slots give way
-            m.FieldEdits.AddRange(Fields.Select(f => Copy(f, f.Value)));
+            m.FieldEdits.RemoveAll(InSlots);   // manual values on the same slots give way
+            int by = Shift ? int.Parse(value) - int.Parse(Default!) : 0;
+            m.FieldEdits.AddRange(Fields.Select(f => Copy(f, Shift ? (int.Parse(f.Value) + by).ToString() : f.Value)));
         }
         else m.FieldEdits.Add(Copy(Field!, value));
         if (Key == "minion_hard_cap") { var ui = CapUi.Copy(); ui.Value = value; m.Runtime.Add(ui); }
+        // the HUD bar gets a space per henchman plus the genius
+        if (Key == "henchman_limit" && int.Parse(value) + 1 > HenchmanBar.GameSlots) m.HenchmanBarSlots = int.Parse(value) + 1;
     }
 
     static FieldEdit Copy(FieldEdit f, string value) => new()
@@ -88,6 +98,7 @@ public sealed class Tweak
     bool Same(FieldEdit e) => Field is { } f && SameSlot(e, f);
     /// <summary>One of this switch's own edits (same slot and preset value), so switching off keeps manual values there.</summary>
     bool InFields(FieldEdit e) => Fields!.Any(f => SameSlot(e, f) && e.Value == f.Value);
+    bool InSlots(FieldEdit e) => Fields!.Any(f => SameSlot(e, f));
 }
 
 public static class QuickTweaks
@@ -148,6 +159,7 @@ public static class QuickTweaks
                 list.Add(FieldTweak(res, "Intel and Tech", label, 41, "u32", Bytes.U32(res.Body, 41).ToString(),
                     "Most you can hold, for NEW games (a save keeps the cap it started with; use the \"existing saves\" setting for those)."));
         if (NoTemperature(game) is { } temp) list.Add(temp);
+        if (HenchmanLimit(game) is { } hench) list.Add(hench);
         return list;
     }
 
@@ -192,6 +204,63 @@ public static class QuickTweaks
             Key = "no_temperature", Group = "Lair", Label = "Turn off temperature", IsFlag = true, Default = "off", Fields = fields,
             Help = "Every tile on every island stays at 0: furniture gives off no heat or cold, the Polar story no longer chills the lair, and minions, agents and furniture get no Cold/Hot/Freezing/Melting effects or \"Comfortable\" bonus.",
         };
+    }
+
+    /// <summary>Script node type "{MinionType} InLair": counts minions in the lair. Game scripts use it only for henchmen.</summary>
+    const uint HenchmenInLair = 0x10e28e6e;
+
+    /// <summary>
+    /// Where the scripts cap henchmen: every mission whose condition counts henchmen in the lair (node type
+    /// <see cref="HenchmenInLair"/>) against a number. The number is the next i32 setting after the node type:
+    /// 5 = "fewer than 5 henchmen" (recruit missions vanish at 5), 4 = "not at 4 with a recruit already on the way"
+    /// (crime-lord story starts). Not "Has5Henchmen" (an optional objective for HAVING 5), minion-swap steps or loot.
+    /// </summary>
+    static IEnumerable<(GameObject Obj, ObjectInspector.Param P)> HenchmanChecks(GameData game)
+    {
+        var bp = BitConverter.GetBytes(HenchmenInLair);
+        foreach (var o in game.Objects.Where(o => o.Tag == "robj" && o.Name != "Has5Henchmen" && o.Body.AsSpan().IndexOf(bp) >= 0))
+        {
+            var ps = ObjectInspector.Params(o);
+            for (int i = 0; i + 4 <= o.Body.Length; i++)
+                if (Bytes.U32(o.Body, i) == HenchmenInLair
+                    && ps.Where(p => p.Offset > i).MinBy(p => p.Offset) is { Type: "i32", Value: "4" or "5" } p && p.Offset - i <= 700)
+                    yield return (o, p);
+        }
+    }
+
+    /// <summary>The "Henchman" resources (rcns): their cap at +41 is 10, the same slot as the Intel/Tech caps.</summary>
+    static IEnumerable<GameObject> HenchmanResources(GameData game) =>
+        game.Objects.Where(o => o.Tag == "rcns" && o.Name == "\"Henchman\"" && o.Body.Length > 45);
+
+    static Tweak? HenchmanLimit(GameData game)
+    {
+        var fields = HenchmanChecks(game).Select(x => new FieldEdit
+        {
+            Package = x.Obj.Package, Tag = x.Obj.Tag, Object = x.Obj.Key, Offset = x.P.Offset, Type = "i32", Value = x.P.Value,
+            Expect = Convert.ToHexString(x.Obj.Body, x.P.Offset, 4), Note = $"henchman limit: {x.Obj.Name}",
+        }).Concat(HenchmanResources(game).Select(o => new FieldEdit
+        {
+            Package = o.Package, Tag = o.Tag, Object = o.Key, Offset = 41, Type = "i32", Value = Bytes.U32(o.Body, 41).ToString(),
+            Expect = Convert.ToHexString(o.Body, 41, 4), Note = "henchman limit: Henchman resource cap",
+        })).ToList();
+        if (fields.Count == 0) return null;
+        return new Tweak
+        {
+            Key = "henchman_limit", Group = "Henchmen", Label = "Henchman limit", Default = "5", Min = 1, Max = 99, Shift = true, Fields = fields,
+            Help = "How many henchmen you can hire. Recruit missions and crime-lord stories stop appearing once you have this many. The HUD bar gets a space for each.",
+        };
+    }
+
+    /// <summary>The henchman limit by hand: each mission's check, and the Henchman resource caps.</summary>
+    public static List<Tweak> Henchmen(GameData game)
+    {
+        var list = HenchmanChecks(game).OrderBy(x => x.Obj.Name, StringComparer.OrdinalIgnoreCase).Select(x => FieldTweak(x.Obj, $"Mission: {x.Obj.Name}",
+            x.P.Value == "5" ? "Henchman limit" : "Henchman limit - 1 (a recruit already on the way)", x.P.Offset, "i32", x.P.Value,
+            x.P.Value == "5" ? "The mission only appears with fewer henchmen than this." : "Should stay one below this mission's henchman limit.")).ToList();
+        foreach (var o in HenchmanResources(game))
+            list.Add(FieldTweak(o, $"Resource: Henchman ({o.Package})", "Cap (unconfirmed)", 41, "i32", Bytes.U32(o.Body, 41).ToString(),
+                "The Henchman resource's maximum, like the Intel/Tech caps. Keep it at or above the henchman limit."));
+        return list;
     }
 
     /// <summary>

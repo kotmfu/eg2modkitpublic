@@ -15,6 +15,6 @@
     <!-- the same Quick Tweaks rows as ModKit, so the two stay in sync -->
     <Compile Include="..\Eg2.ModManager\TweaksPanel.cs" Link="TweaksPanel.cs" />
     <!-- mods with runtime tweaks install this proxy; see native\winmm -->
-    <None Include="..\..\native\winmm\bin\xinput1_4.dll" Link="runtime\xinput1_4.dll" CopyToOutputDirectory="PreserveNewest" Condition="Exists('..\..\native\winmm\bin\xinput1_4.dll')" />
+    <None Include="..\..\native\winmm\bin\xinput1_4.dll" Link="runtime\xinput1_4.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true" Condition="Exists('..\..\native\winmm\bin\xinput1_4.dll')" />
   </ItemGroup>
 </Project>

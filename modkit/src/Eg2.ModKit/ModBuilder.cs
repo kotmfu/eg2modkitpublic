@@ -679,14 +679,16 @@ public static class ModBuilder
             objects[key] = (src, ApplyRequirements(game, src.Tag, body, grp.Select(x => (x.Mod, x.Edit)), refs, r));
         }
 
-        // objective task lists
+        // objective task lists; a copied task comes from its objective as field edits left it (e.g. a lowered count)
+        var beforeTasks = new Dictionary<string, (GameObject Base, byte[] Body)>(objects, StringComparer.OrdinalIgnoreCase);
+        byte[] Edited(GameObject o) => beforeTasks.TryGetValue($"{o.Package}/{o.Tag}/{Bytes.Hex(o.ObjectId)}", out var c) ? c.Body : o.Body;
         foreach (var grp in tasks.GroupBy(x => x.Edit.Object.ToLowerInvariant()))
         {
             var src = game.Objects.FirstOrDefault(x => !x.IsRecord && x.Tag == "robj" && Bytes.Hex(x.ObjectId).Equals(grp.Key, StringComparison.OrdinalIgnoreCase));
             if (src is null) { r.Errors.Add($"{grp.First().Mod.Id}: tasks: {grp.Key} is not an objective"); continue; }
             string key = $"{src.Package}/{src.Tag}/{Bytes.Hex(src.ObjectId)}";
             var body = objects.TryGetValue(key, out var have) ? have.Body : (byte[])src.Body.Clone();
-            objects[key] = (src, ApplyTasks(game, body, grp.Select(x => (x.Mod, x.Edit)), r));
+            objects[key] = (src, ApplyTasks(game, body, grp.Select(x => (x.Mod, x.Edit)), r, Edited));
         }
 
         foreach (var grp in schemes.GroupBy(x => x.Edit.Object.ToLowerInvariant()))
@@ -875,7 +877,7 @@ public static class ModBuilder
     }
 
     /// <summary>Replaces an objective's task list; tasks are copied whole from the objectives they name.</summary>
-    static byte[] ApplyTasks(GameData game, byte[] body, IEnumerable<(ModDefinition Mod, TaskEdit Edit)> edits, BuildResult r)
+    static byte[] ApplyTasks(GameData game, byte[] body, IEnumerable<(ModDefinition Mod, TaskEdit Edit)> edits, BuildResult r, Func<GameObject, byte[]>? current = null)
     {
         foreach (var (mod, e) in edits)
         {
@@ -887,7 +889,7 @@ public static class ModBuilder
             {
                 var parts = t.Split(':');
                 var from = parts.Length == 2 ? game.Objects.FirstOrDefault(x => !x.IsRecord && x.Tag == "robj" && Bytes.Hex(x.ObjectId).Equals(parts[0], StringComparison.OrdinalIgnoreCase)) : null;
-                var list = from is null ? null : ObjectiveTasks.Parse(from.Body);
+                var list = from is null ? null : ObjectiveTasks.Parse(current?.Invoke(from) ?? from.Body);
                 if (list is null || !int.TryParse(parts[1], out int i) || i < 0 || i >= list.Count) { r.Errors.Add($"{where}: unknown task '{t}' (expected 0x<objective>:<index>)"); picked.Clear(); break; }
                 picked.Add(list[i].Bytes);
             }
@@ -1137,18 +1139,33 @@ public static class ModBuilder
         }
 
         // asset stores that aren't package contents (sound banks): one whole-file patch each, same compression as the original
-        foreach (var group in assetEdits.Where(x => !contentOf.ContainsKey(Norm(x.A.File))).GroupBy(x => Norm(x.A.File), StringComparer.OrdinalIgnoreCase))
+        var loose = assetEdits.Where(x => !contentOf.ContainsKey(Norm(x.A.File))).GroupBy(x => Norm(x.A.File), StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);
+        var bars = mods.Where(m => m.HenchmanBarSlots is not null).ToList();
+        if (bars.Select(m => m.HenchmanBarSlots).Distinct().Count() > 1)
+            r.Errors.Add($"conflict: henchman bar slots set by {string.Join(" and ", bars.Select(m => $"{m.Id} ({m.HenchmanBarSlots})"))}");
+        if (bars.FirstOrDefault()?.HenchmanBarSlots is { } slots and (< HenchmanBar.GameSlots or > 100))
+            r.Errors.Add($"{bars[0].Id}: henchman bar slots must be {HenchmanBar.GameSlots} to 100");
+        if (!r.Ok) return;
+        int barSlots = bars.FirstOrDefault()?.HenchmanBarSlots ?? HenchmanBar.GameSlots;
+        if (barSlots > HenchmanBar.GameSlots) loose.TryAdd(HenchmanBar.File, new());
+        foreach (var (file, items) in loose)
         {
             ct.ThrowIfCancellationRequested();
-            log($"patching {group.Key}");
-            var items = group.ToList();
-            AsuraArchive? arc = AsuraArchive.Load(game.Install.Full(group.Key));
+            log($"patching {file}");
+            AsuraArchive? arc = AsuraArchive.Load(game.Install.Full(file));
             ApplyAssets(arc, items, r);
             if (!r.Ok) return;
+            if (barSlots > HenchmanBar.GameSlots && file.Equals(HenchmanBar.File, StringComparison.OrdinalIgnoreCase))
+            {
+                var guat = arc.First("GUAT") ?? throw new InvalidOperationException($"{file}: no GUAT chunk");
+                guat.Body = HenchmanBar.Apply(guat.Body, barSlots);
+                r.Report.Add($"henchman bar: {barSlots} slots");
+            }
             bool compressed = arc.Compressed;
             byte[]? raw = arc.Payload();
             arc = null;
-            string rel = group.Key + GameInstall.PatchSuffix;
+            string rel = file + GameInstall.PatchSuffix;
             r.Files[rel] = compressed ? AsuraArchive.Compress(raw) : raw;
             raw = null;
             CheckAssets(AsuraArchive.FromBytes(r.Files[rel]), items, r);
@@ -1434,11 +1451,11 @@ public static class ModBuilder
 
     /// <summary>Furniture the player has built in their EG2 saves (read only): one per item and facing, the shortest
     /// record (least live state). Saves from the current game use the same object format as every lair but Crown Gold.</summary>
-    public static List<LairMap.PlacedObject> SaveTemplates(Action<string> log)
+    public static List<LairMap.PlacedObject> SaveTemplates(GameInstall install, Action<string> log)
     {
         if (_saveTemplates is not null) return _saveTemplates;
         var all = new List<LairMap.PlacedObject>();
-        var root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Evil Genius 2", "PC_ProfileSaves");
+        var root = install.SavesDir;
         var files = Directory.Exists(root) ? Directory.GetFiles(root, "slot*.sav", SearchOption.AllDirectories).Where(f => !Path.GetFileName(f).Equals("slot0.sav", StringComparison.OrdinalIgnoreCase)).ToList() : new();
         for (int i = 0; i < files.Count; i++)
         {

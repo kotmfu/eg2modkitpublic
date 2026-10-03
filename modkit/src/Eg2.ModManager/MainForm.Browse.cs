@@ -58,6 +58,7 @@ sealed partial class MainForm
         _editAt = Btn("Edit at offset…", (_, _) => EditAtOffset());
         _scripts = Btn("Scripts…", (_, _) => ShowScripts());
         var findScripts = Btn("Find scripts…", (_, _) => FindScripts());
+        var nodes = Btn("Script nodes…", (_, _) => ShowNodeCatalog());
         _shape = Btn("Size and slots…", (_, _) => { if (_shown is GameObject o) ShowShape(o); });
         _jobTypes = Btn("Who can do it…", (_, _) => { if (_shown is GameObject o) ShowJobTypes(o); });
         _lists = Btn("Lists…", (_, _) => { if (_shown is GameObject o) ShowLists(o); });
@@ -102,7 +103,7 @@ sealed partial class MainForm
         var right = new Panel { Dock = DockStyle.Fill, Padding = new Padding(4) };
         right.Controls.Add(_objView);
         right.Controls.Add(_textView);
-        right.Controls.Add(Bar(_back, _addNew, _copyObject, _addCost, _editText, _draftText, _editValue, _editAt, _scripts, findScripts, _reqs, _tasks, _scheme, _pool, _shape, _jobTypes, _lists, _raw, _target));
+        right.Controls.Add(Bar(_back, _addNew, _copyObject, _addCost, _editText, _draftText, _editValue, _editAt, _scripts, findScripts, nodes, _reqs, _tasks, _scheme, _pool, _shape, _jobTypes, _lists, _raw, _target));
         right.Controls.Add(_typeHelp);
         right.Controls.Add(_subtitle);
         right.Controls.Add(_title);

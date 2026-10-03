@@ -23,7 +23,7 @@ sealed partial class MainForm
         Group("Start", false, (_homePage, "Home"));
         Group("Play", false, (_tweaksPage, "Quick tweaks"), (_applyPage, "Install mods"));
         Group("Make a mod", false, (_modsPage, "My mods"), (GridPage("Research"), "Research numbers"),
-              (_furniturePage, "Furniture"), (GridPage("Furniture Effects"), "Furniture effects"), (GridPage("Temperature"), "Temperature"), (_treesPage!, "Research trees"), (_mapsPage!, "Lair maps"),
+              (_furniturePage, "Furniture"), (GridPage("Furniture Effects"), "Furniture effects"), (GridPage("Temperature"), "Temperature"), (GridPage("Henchmen"), "Henchmen"), (_treesPage!, "Research trees"), (_mapsPage!, "Lair maps"),
               (_islandPage!, "Islands"));
         Group("Advanced", true, (_browsePage, "Browse game data"), (_assetsPage!, "Game files"));
         Group("", false, (_settingsPage, "Settings"));

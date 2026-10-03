@@ -68,13 +68,13 @@ public sealed class FlowGraph
         return graphs;
     }
 
-    /// <summary>Start of the node whose marker is at <paramref name="marker"/>: back over version words (1) and 9-byte block headers to the type hash.</summary>
+    /// <summary>Start of the node whose marker is at <paramref name="marker"/>: back over version words (1, 2, ...) and 9-byte block headers to the type hash.</summary>
     static int TypeStart(byte[] b, int marker, int min)
     {
         int p = marker - 4;
         while (p - 4 >= min)
         {
-            if (Bytes.U32(b, p) == 1) { p -= 4; continue; }
+            if (Bytes.U32(b, p) is >= 1 and <= 16) { p -= 4; continue; }
             if (p - 5 >= min && (Bytes.U32(b, p - 5) & 0xffff0000) == 0x80000000 && b[p - 1] == 0) { p -= 9; continue; }
             break;
         }
@@ -98,8 +98,31 @@ public sealed class FlowGraph
         public Dictionary<uint, string> Pins { get; } = new();
 
         public string Type(uint t) => Types.TryGetValue(t, out var n) ? n : $"node {Bytes.Hex(t)}";
-        /// <summary>A pin's learned name, else "in"/"out" (the real names aren't stored; only "Condition" etc. hash back).</summary>
-        public string Pin(uint p, bool output) => Pins.TryGetValue(p, out var n) ? n.Trim('{', '}') : output ? "out" : "in";
+        /// <summary>A pin's learned name, else its internal name, else "in"/"out".</summary>
+        public string Pin(uint p, bool output) => Pins.TryGetValue(p, out var n) ? n.Trim('{', '}') : Internal.TryGetValue(p, out var i) ? i : output ? "out" : "in";
+
+        /// <summary>Internal pin names: a pin hash is KeyHash (lower-case h31) of a name that the game files don't store.
+        /// These were found by hashing the game's own strings and word pairs built from them; collisions with nonsense
+        /// strings were dropped. The learned (display) name can differ, e.g. InputAmount shows as "Count".</summary>
+        public static readonly Dictionary<uint, string> Internal = new()
+        {
+            [0x65c663f8] = "InputFlow", [0xb41ab1af] = "OutputFlow", [0xa7b24ff4] = "FlowStart", [0xd25ad0ed] = "FlowEnd",
+            [0x79062fbc] = "FlowTrue", [0xa6f2a4b5] = "FlowFalse", [0x2969894e] = "DataConstant", [0xd017f110] = "OutputValue",
+            [0xcf12b0ae] = "OutputCount", [0x2c4e5c5e] = "OutputResult", [0xef70d595] = "OutputDuration", [0x70240cb1] = "OutputIsActive",
+            [0x080e372a] = "OutputDataObject", [0x0ff18856] = "OutputFactionId", [0x236a0def] = "InputScheme", [0xe30084af] = "InputObjective",
+            [0x65c91368] = "InputList", [0x21d6a067] = "InputResult", [0x054328a2] = "InputAmount", [0xa3f83b5e] = "InputDuration",
+            [0x23985e2b] = "InputProbability", [0x1c0ea8b7] = "InputFOJ", [0x29a47ffa] = "InputMinionType", [0x22f8168b] = "InputSchemePool",
+            [0x333d57f5] = "InputMaxCount", [0xd6749335] = "InputAgentType", [0x00d8f267] = "InputConsumableType", [0x0683188c] = "Scene",
+            [0x06ac9171] = "Value", [0xdd6757f2] = "Furniture", [0xc81f0981] = "MarkAsNew", [0xa96c9e2c] = "FurnitureType",
+            [0xec34dcb0] = "MinionType", [0x05a7510f] = "Count", [0x0001bf9a] = "Tag", [0x9cafe26e] = "HotelCapacity",
+            [0x9aaac7bf] = "AgentType", [0xcca96d1b] = "Condition", [0xfd350a68] = "FurnitureTag", [0x09f784b0] = "IsActive",
+            [0xc84dc81d] = "Result", [0x6487f802] = "MaximumTier", [0x0585a9f5] = "Actor", [0x0032b09e] = "List",
+            [0x18934a1e] = "Antagonist", [0x05fb28d2] = "Index", [0x002eefaa] = "Data", [0xb9a85777] = "AgentFaction",
+            [0xcfca6acc] = "AmountAffected", [0x8287dae8] = "TileType", [0xd93bc2f5] = "LairBlueprint", [0xa7e6fe50] = "NewMinionType",
+            [0xbf4c4617] = "OldMinionType", [0xf5ba2a95] = "RoomType", [0x4fa25274] = "SpawnCount", [0x52c72d40] = "SpawnInterval",
+            [0xa0b8aefc] = "GasCloud", [0x0ca6a866] = "VehicleType", [0x1e21bde2] = "MoneyTransactionReason", [0xd876078f] = "GoldReward",
+            [0x29f5d119] = "FuelCount",
+        };
 
 
         public static Names Learn(IEnumerable<byte[]> bodies)

@@ -297,7 +297,7 @@ sealed partial class MainForm
         if (_mapSel is null) { Warn("Click where it should go first (the object's corner goes on the selected cell)."); return; }
         var map = _map;
         List<LairMap.PlacedObject>? saved = null;
-        if (!await Run("Reading your saves for furniture", (log, _) => saved = ModBuilder.SaveTemplates(log)) || saved is null) return;
+        if (!await Run("Reading your saves for furniture", (log, _) => saved = ModBuilder.SaveTemplates(_game.Install, log)) || saved is null) return;
         var names = FnasNames();
         var f0 = MapFloor!;
         var sel = _mapSel.Value;

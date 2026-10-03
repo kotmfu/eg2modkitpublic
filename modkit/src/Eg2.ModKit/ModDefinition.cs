@@ -425,6 +425,8 @@ public sealed class ModDefinition
     public List<AssetReplacement> Assets { get; set; } = new();
     /// <summary>Videos (e.g. "fmv/rebellion.webm") the game skips: a 0-byte .asrpatch the runtime DLL treats as missing.</summary>
     public List<string> SkipVideos { get; set; } = new();
+    /// <summary>Spaces in the HUD's genius and henchman bar (game: 6); null = unchanged. See <see cref="HenchmanBar"/>.</summary>
+    public int? HenchmanBarSlots { get; set; }
     public List<SceneryEdit> SceneryEdits { get; set; } = new();
     /// <summary>Whole new lairs: copies of a game lair's files under a new stem (MapEdits / SceneryEdits can then target it).</summary>
     public List<NewLair> NewLairs { get; set; } = new();

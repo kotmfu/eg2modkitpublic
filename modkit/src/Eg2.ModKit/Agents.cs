@@ -46,7 +46,7 @@ public static class Agents
     {
         if (_saved is not null) return _saved;
         var all = new List<Template>();
-        var root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Evil Genius 2", "PC_ProfileSaves");
+        var root = game.Install.SavesDir;
         var files = Directory.Exists(root) ? Directory.GetFiles(root, "slot*.sav", SearchOption.AllDirectories).Where(f => !Path.GetFileName(f).Equals("slot0.sav", StringComparison.OrdinalIgnoreCase)).ToList() : new();
         var classes = game.Objects.Where(o => o.Tag == "rsbs").ToList();
         string Kind(uint type) => classes.FirstOrDefault(o => o.Body.AsSpan().IndexOf(BitConverter.GetBytes(type)) >= 0)?.Name.Trim('"') is { Length: > 0 } n && n != "cAc2"

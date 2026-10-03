@@ -312,8 +312,12 @@ sealed partial class InstallerForm : Form
                 return;
             files = r.Files;
             r = null;
+            var wine = GameInstall.WineNote(root, files.Keys);
             if (await Run("Installing", log => Installer.Install(root, files, mods, foreign.Count > 0, log)))
+            {
                 _status.Text = $"{mods.Count} mod{(mods.Count == 1 ? " is" : "s are")} in the game. Start it from Steam as usual.";
+                if (wine is not null) { try { Clipboard.SetText(GameInstall.WineLaunchOption); } catch (System.Runtime.InteropServices.ExternalException) { } Warn(wine); }
+            }
             RefreshInstalled();
         }
         finally { r = null; files = null; }

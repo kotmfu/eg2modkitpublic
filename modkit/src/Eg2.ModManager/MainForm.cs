@@ -92,6 +92,10 @@ sealed partial class MainForm : Form
             "level (Freezing … Melting) covers. Traits: what minions and agents get on those tiles. " +
             "Type a new value in \"Your value\", clear it to go back to the game's. To switch temperature off entirely, use the tick box in Quick tweaks. Saved in the \"Quick tweaks\" mod.",
             QuickTweaks.Temperature));
+        _tabs.TabPages.Add(TweakGridPage("Henchmen",
+            "How many henchmen you can hire. Each recruit mission and crime-lord story checks it separately: \"Henchman limit\" (5 in the game) and, " +
+            "in the stories, \"limit - 1\" for when a recruit is already on the way. For the usual case use \"Henchman limit\" in Quick tweaks. Saved in the \"Quick tweaks\" mod.",
+            QuickTweaks.Henchmen));
         _tabs.TabPages.Add(_furniturePage = FurniturePage());
         _tabs.TabPages.Add(_treesPage = TreesPage());
         _tabs.TabPages.Add(_mapsPage = MapsPage());
@@ -316,6 +320,7 @@ sealed partial class MainForm : Form
         _game = g!;
         _assets = null;
         _guiNames = null;
+        _nodeCatalog = null;
         _dataStatus.Text = $"{_game.Furniture.Count} furniture items, {_game.Objects.Count:N0} objects, {_game.Text.Count:N0} text entries ({lang}).";
         _status.Text = "Ready.";
         BrowseLoaded();
@@ -655,8 +660,12 @@ sealed partial class MainForm : Form
                 if (MessageBox.Show(this, msg, Text, MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
                 overwrite = true;
             }
+            var wine = GameInstall.WineNote(root, r.Files.Keys);
             if (await Run("Installing", (log, _) => Installer.Install(root, r.Files, mods, overwrite, log)))
+            {
                 _status.Text = $"Applied {mods.Count} mod{(mods.Count == 1 ? "" : "s")}. Start the game from Steam as usual.";
+                if (wine is not null) { try { Clipboard.SetText(GameInstall.WineLaunchOption); } catch (System.Runtime.InteropServices.ExternalException) { } Warn(wine); }
+            }
             RefreshInstalled();
         }
         finally { r = null; }

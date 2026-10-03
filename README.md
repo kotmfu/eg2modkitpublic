@@ -1,6 +1,9 @@
 # Eg2 ModKit
 
 A mod manager and mod-making toolkit for **Evil Genius 2: World Domination**
+(Rebellion, 2021). The game runs on Rebellion's in-house Asura engine. It has no
+official mod support and no SDK, so everything here was worked out from a retail
+install.
 
 ## Quick start
 - **Using mods/quick tweaks:** Get the mod installer, it does both
@@ -29,7 +32,7 @@ patches game code.
 
 ## Requirements
 
-- Windows 10/11, x64
+- Windows 10/11, x64, or Linux / Steam Deck through Wine or Proton (see below)
 - Evil Genius 2 (Steam)
 - [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0) to build
 - Visual Studio C++ build tools, only if you want to rebuild the `xinput1_4.dll` proxy
@@ -56,6 +59,35 @@ Mods live in `Documents\Eg2ModKit\Mods` and settings in
 `<game>\eg2modkit.installed.json`.
 
 **Back up your saves.** A save made with mods active can depend on them.
+
+## Linux and Steam Deck
+
+The apps are Windows programs; they run under Wine or Proton like the game does.
+Build them self-contained so no .NET install is needed inside Wine:
+
+```bash
+dotnet publish modkit/src/Eg2.ModInstaller -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true -p:DebugType=none -o out/publish/Eg2ModInstaller
+```
+
+(Same for `Eg2.ModManager`.) Ship the whole output folder: the exe plus
+`runtime\xinput1_4.dll`.
+
+To run it, either add the exe to Steam as a non-Steam game and force a Proton
+version in its Properties → Compatibility, or run `wine Eg2ModInstaller.exe`.
+It finds the game in the Linux Steam libraries (`~/.steam/steam`,
+`~/.local/share/Steam`, Flatpak) and reads saves from the game's own Proton
+prefix (`steamapps/compatdata/700600`).
+
+Runtime tweaks (minion cap, salaries, intro skip and so on) need one Steam
+launch option on the game, because Wine otherwise uses its own `xinput1_4`.
+The apps show this, and copy it to the clipboard, after an install that needs it:
+
+```
+WINEDLLOVERRIDES="xinput1_4=n,b" %command%
+```
+
+Everything else, such as furniture, text, maps and Quick Tweaks field edits,
+is plain files in the game folder and needs nothing extra.
 
 ## Layout
 

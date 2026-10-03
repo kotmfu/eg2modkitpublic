@@ -11,6 +11,6 @@
   <ItemGroup>
     <ProjectReference Include="..\Eg2.ModKit\Eg2.ModKit.csproj" />
     <!-- prebuilt by native\winmm\build.cmd; kept in runtime\ so ModManager itself never loads it -->
-    <None Include="..\..\native\winmm\bin\xinput1_4.dll" Link="runtime\xinput1_4.dll" CopyToOutputDirectory="PreserveNewest" Condition="Exists('..\..\native\winmm\bin\xinput1_4.dll')" />
+    <None Include="..\..\native\winmm\bin\xinput1_4.dll" Link="runtime\xinput1_4.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true" Condition="Exists('..\..\native\winmm\bin\xinput1_4.dll')" />
   </ItemGroup>
 </Project>
