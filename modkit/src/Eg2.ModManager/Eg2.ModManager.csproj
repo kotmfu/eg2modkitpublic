@@ -6,6 +6,7 @@
     <UseWindowsForms>true</UseWindowsForms>
     <RootNamespace>Eg2.ModManager</RootNamespace>
     <AssemblyName>Eg2ModManager</AssemblyName>
+    <Version>1.0.3</Version>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
   </PropertyGroup>
   <ItemGroup>

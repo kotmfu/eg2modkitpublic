@@ -7,7 +7,9 @@ namespace Eg2.ModKit;
 /// <summary>
 /// One value the xinput1_4.dll proxy writes into the running game (see native/winmm/dllmain.cpp).
 /// Self-contained: the pattern and how to resolve it travel with the mod, so new tweaks never
-/// need a new DLL. Data only -- used for globals and struct fields, never code.
+/// need a new DLL. Data (globals and struct fields), except kind code_bytes: <see cref="Value"/> is hex bytes written
+/// once over game code at match + <see cref="At"/>, inside the pattern, which must match exactly once (so it pins the
+/// bytes it replaces).
 /// </summary>
 public sealed class RuntimePatch
 {
@@ -55,7 +57,14 @@ public sealed class RuntimePatch
         if (!PatternRx.IsMatch(Pattern.Trim())) return "pattern must be hex bytes or ?? separated by spaces";
         if (!Types.Contains(Type)) return $"type must be one of {string.Join(", ", Types)}";
         if (Rel >= 0 && Len <= Rel + 3) return "len must cover the rel32 operand";
-        if (Kind is not ("" or "hashmap_record" or "table_lookup")) return "kind must be empty, hashmap_record or table_lookup";
+        if (Kind is not ("" or "hashmap_record" or "table_lookup" or "code_bytes")) return "kind must be empty, hashmap_record, table_lookup or code_bytes";
+        if (Kind == "code_bytes")
+        {
+            string b = Value.Trim();
+            if (!PatternRx.IsMatch(b) || b.Contains('?')) return "value must be hex bytes separated by spaces";
+            int n = b.Split(' ').Length, len = Pattern.Trim().Split(' ').Length;
+            return At >= 0 && At + n <= len ? null : "the bytes must lie inside the pattern";
+        }
         var inv = CultureInfo.InvariantCulture;
         string v = Value.Trim();
         bool ok = Type.StartsWith('f') ? double.TryParse(v, NumberStyles.Float, inv, out _)
@@ -72,12 +81,13 @@ public sealed class RuntimePatch
         sb.AppendLine($"pattern = {Pattern.Trim().ToUpperInvariant()}");
         if (Kind == "hashmap_record") sb.AppendLine($"kind = {Kind}").AppendLine($"hit = {Hit}").AppendLine($"id_at = {IdAt}").AppendLine($"mirror_at = {MirrorAt}");
         if (Kind == "table_lookup") sb.AppendLine($"kind = {Kind}").AppendLine($"id_at = {IdAt}").AppendLine($"alt_at = {AltAt}").AppendLine($"alt_if = {AltIf ?? "0"}").AppendLine($"call_at = {CallAt}");
+        if (Kind == "code_bytes") sb.AppendLine($"kind = {Kind}");
         if (At != 0) sb.AppendLine($"at = {At}");
         if (Rel >= 0) sb.AppendLine($"rel = {Rel}").AppendLine($"len = {Len}");
         if (Deref) sb.AppendLine("deref = 1");
         if (Offset != 0) sb.AppendLine($"offset = 0x{Offset:X}");
-        sb.AppendLine($"type = {Type}");
-        sb.AppendLine($"value = {Value.Trim()}");
+        if (Kind != "code_bytes") sb.AppendLine($"type = {Type}");
+        sb.AppendLine($"value = {(Kind == "code_bytes" ? Value.Trim().ToUpperInvariant() : Value.Trim())}");
         if (!string.IsNullOrWhiteSpace(SkipIf)) sb.AppendLine($"skip_if = {SkipIf.Trim()}");
         return sb.ToString();
     }
@@ -110,6 +120,23 @@ public static class RuntimePresets
     static RuntimePatch Setting(string name, int offset, string type, string value, string note) => new()
     {
         Name = name, Pattern = Settings, Rel = 3, Len = 7, Deref = true, Offset = offset, Type = type, Value = value, Note = note,
+    };
+
+    static RuntimePatch Code(string name, string pattern, int at, string value, string note) => new()
+    {
+        Name = name, Kind = "code_bytes", Pattern = pattern, At = at, Value = value, Note = note,
+    };
+
+    /// <summary>Several side stories at once (all three needed; patterns unique in the dx12 and vulkan exes). Each refuses
+    /// while another side story isn't paused (state 6).</summary>
+    public static readonly IReadOnlyList<RuntimePatch> SideStories = new[]
+    {
+        Code("sidestory_start_any", "4B 8D 0C 40 48 C1 E1 05 42 83 7C 09 14 06 74 0B 42 39 5C 09 08 0F 85 ?? ?? ?? ??", 21, "66 0F 1F 44 00 00",
+             "Objective manager, start message 0x80b8 (dx12 0x92c615): jne -> nop"),
+        Code("sidestory_resume_any", "8B C2 48 6B C8 58 42 83 7C 11 14 06 74 0B 46 39 4C 11 08 0F 85 ?? ?? ?? ??", 19, "66 0F 1F 44 00 00",
+             "Objectives screen resume button (dx12 0x8612c3): jne -> nop"),
+        Code("sidestory_none_active_flag", "41 8B C0 48 6B C8 58 42 8B 54 09 14 83 EA 01 0F 84 ?? ?? ?? ?? 83 EA 01 0F 84 ?? ?? ?? ?? 83 FA 02 0F 84 ?? ?? ?? ??", 7, "31 D2 0F 1F 00",
+             "Objectives screen (dx12 0x8614a7): GUI flag 'a side story is active' (GUI variable 0xc7bfa2ac) stays 0"),
     };
 
     public static readonly IReadOnlyList<RuntimePatch> All = new[]

@@ -182,6 +182,21 @@ public sealed class MapEdit
     /// <summary>character: optional agent squad (hex: [01][u32 id][u32 1] + prop 0x3eb) added to the map's AI block, so
     /// the characters have orders (a character without a squad stands still and can't be targeted).</summary>
     public string? Squad { get; set; }
+    /// <summary>agent, character: the wave (hex) the squad belongs to, in place of the template's (squad entry @31). A wave
+    /// is a misc\common.asr BLUE object: story waves set DisableImmuneAutoLeaves, so their agents stay killable when
+    /// they decide to leave (heat-raid waves don't). See <see cref="Agents.StoryWaves"/>.</summary>
+    public string? Wave { get; set; }
+    /// <summary>agent: the character class (hex, a misc\common.asr BLUE ActorBase object) in place of the template's
+    /// (entity @56, squad member records). With a <see cref="ClassTree"/> it gives placed agents their own behaviour.</summary>
+    public string? Class { get; set; }
+    /// <summary>agent: the behaviour tree (hex, misc\common.asr AXBT) it runs, in place of the one its save stored (entity
+    /// @240), e.g. 00313fd4 EG Idle. Only this agent changes.</summary>
+    public string? Tree { get; set; }
+    /// <summary>agent: map objects (hex grid object ids, space-separated) it walks between, Diver style (see
+    /// <see cref="Agents.WithPatrol"/>); use with a WaveTargetType 2 <see cref="Wave"/>. <see cref="PatrolState"/>: the
+    /// member's state byte (Divers 8), optional.</summary>
+    public string? Patrol { get; set; }
+    public int? PatrolState { get; set; }
     /// <summary>agent: the transport vehicle it came in, "id:type" hex (swapped for a same-type one on another island).</summary>
     public string? Vehicle { get; set; }
     public string? Note { get; set; }
@@ -304,6 +319,24 @@ public sealed class JobEdit
 /// (Node), "copy-node" (Node; the copy gets the next free id, which later ops can use), "add-link" (From, FromPin, To,
 /// ToPin; the output must already have a link), "remove-link" (Link). Pins are the hashes shown in the Scripts window.
 /// </summary>
+/// <summary>
+/// One behaviour tree setting changed (AXBT in misc\common.asr, <see cref="BehaviourTrees"/>): tree hash, step index, the
+/// setting's position among the step's typed settings (0-based), and the new value (a number for floats and enums, true or
+/// false for bools). Expect = the game's value as shown, to catch a game update moving things.
+/// </summary>
+public sealed class TreeEdit
+{
+    public string Tree { get; set; } = "";
+    public int Step { get; set; }
+    public int Setting { get; set; }
+    /// <summary>A plain field instead of a typed setting: "mode" (Serial, Parallel), "count" / "time" (Loop), "watch" /
+    /// "compare" (conditions). Setting is ignored then.</summary>
+    public string? Field { get; set; }
+    public string Value { get; set; } = "";
+    public string Expect { get; set; } = "";
+    public string? Note { get; set; }
+}
+
 public sealed class GraphEdit
 {
     /// <summary>"0x..." (game object) or "@Key" (this mod's new object).</summary>
@@ -400,6 +433,36 @@ public sealed class TextEdit
     public string Text { get; set; } = "";
 }
 
+/// <summary>A new animation clip (HCAN) under its own name, added to a package's content. The game finds clips by
+/// KeyHash of the name, so something must name it: a <see cref="ClipSwap"/>, or a copy that refers to it.</summary>
+public sealed class NewClip
+{
+    public string Name { get; set; } = "";
+    /// <summary>Package whose content gets the clip (misc\packages\required\&lt;package&gt;_content.asr).</summary>
+    public string Package { get; set; } = "characters";
+    /// <summary>The clip (.hcan) in the mod's assets folder; the builder gives it <see cref="Name"/>.</summary>
+    public string Source { get; set; } = "";
+    public string? Note { get; set; }
+}
+
+/// <summary>Every reference to clip <see cref="From"/> in misc\common.asr's character anim sets (BLUE), random and
+/// directional picks (CPAN), reflexes (RFLX) and animation logic (AALG) pointed at <see cref="To"/>.</summary>
+public sealed class ClipSwap
+{
+    public string From { get; set; } = "";
+    public string To { get; set; } = "";
+    public string? Note { get; set; }
+}
+
+/// <summary>A character class's DefaultBT (misc\common.asr BLUE ActorBase tree): the behaviour tree its characters run.
+/// Hex ids. See <see cref="Agents.WithDefaultTree"/>.</summary>
+public sealed class ClassTree
+{
+    public string Class { get; set; } = "";
+    public string Tree { get; set; } = "";
+    public string? Note { get; set; }
+}
+
 /// <summary>One mod = one JSON file in the mods folder.</summary>
 public sealed class ModDefinition
 {
@@ -451,6 +514,10 @@ public sealed class ModDefinition
     public List<JobEdit> JobEdits { get; set; } = new();
     public List<ListEdit> ListEdits { get; set; } = new();
     public List<GraphEdit> GraphEdits { get; set; } = new();
+    public List<TreeEdit> TreeEdits { get; set; } = new();
+    public List<NewClip> NewClips { get; set; } = new();
+    public List<ClipSwap> ClipSwaps { get; set; } = new();
+    public List<ClassTree> ClassTrees { get; set; } = new();
     [JsonIgnore] public string? FilePath { get; set; }
 
     public static ModDefinition Load(string path)

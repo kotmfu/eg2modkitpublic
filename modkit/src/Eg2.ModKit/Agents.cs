@@ -27,6 +27,195 @@ public static class Agents
 
     static float F(byte[] b, int at) => BitConverter.ToSingle(b, at);
 
+    /// <summary>Story waves (misc\common.asr BLUE "Waves" tree) with DisableImmuneAutoLeaves = 1 and WaveTargetType 0, no DLC,
+    /// by the class they spawn: their agents stay killable when they decide to leave, unlike heat-raid waves'.</summary>
+    public static readonly IReadOnlyDictionary<string, uint> StoryWaves = new Dictionary<string, uint>
+    {
+        ["Soldier"] = 0xd4414112,        // KingSolomonsMineshaft soldiers
+        ["Investigator"] = 0xd49a2d2e,   // ColombianEmerald investigators
+    };
+
+    // ------------------------------------------------------------------ world state
+
+    const uint WorldStateKind = 0x8009, WaveEvent = 0x1ee01607;
+
+    /// <summary>
+    /// Gives every squad on the map a raid record in the world state (ENTI kind 0x8009), as a real raid has: without one,
+    /// placed agents turn unkillable once the game registers a raid of its own. A .base has no world state, so the first
+    /// call adds one (a fresh Caine Key game's, embedded as data\worldstate.bin, under a new id). Returns the records added.
+    /// <para>Layout: [1][0][id][0x8009] prop 0x10 { prop (regions), u32, prop 0xf { [u32 n agencies] + n x (9-byte header,
+    /// agency, ...), prop 3 (current heat raid) }, event block [u32 size][u32 2][u32 count] + events, 11-byte trailer }.
+    /// A raid record is event 0x1ee01607 { prop 3 (55 bytes): prop 6 [1][f32 0][0][spawn time 0][01], wave, prop 1
+    /// [0][agency], squad id, state 5 (in the lair) }.</para>
+    /// </summary>
+    public static int AddRaidRecords(LairMap map)
+    {
+        var squads = map.Squads();
+        if (squads.Count == 0) return 0;
+        var ws = map.Entities.FirstOrDefault(e => Bytes.U32(e, 12) == WorldStateKind);
+        bool fresh = ws is null;
+        if (ws is null)
+        {
+            using var s = typeof(Agents).Assembly.GetManifestResourceStream("worldstate.bin") ?? throw new InvalidOperationException("worldstate.bin is not built into ModKit");
+            ws = new byte[s.Length];
+            s.ReadExactly(ws);
+            Bytes.PutU32(ws, 8, map.MaxId() + 1);
+        }
+        if (Bytes.U32(ws, 16) != 0x80000010) throw new InvalidDataException("world state: no prop 0x10");
+        int p = 29;
+        p += 9 + (int)Bytes.U32(ws, p + 5) + 4;
+        if (Bytes.U32(ws, p) != 0x8000000f) throw new InvalidDataException("world state: no prop 0xf");
+        int fp = p + 9, block = fp + (int)Bytes.U32(ws, p + 5);
+        var agencies = new HashSet<uint>();
+        for (int i = 0, n = (int)Bytes.U32(ws, fp), q = fp + 4; i < n; i++, q += 9 + (int)Bytes.U32(ws, q + 5)) agencies.Add(Bytes.U32(ws, q + 9));
+        int size = (int)Bytes.U32(ws, block), count = (int)Bytes.U32(ws, block + 8), end = block + size;
+        var recorded = new HashSet<uint>();
+        for (int i = 0, q = block + 12; i < count; i++, q += 13 + (int)Bytes.U32(ws, q + 9))
+            if (Bytes.U32(ws, q) == WaveEvent) recorded.Add(Bytes.U32(ws, q + 60));
+
+        var records = new List<byte[]>();
+        foreach (var sq in squads.Where(s => !recorded.Contains(Bytes.U32(s, 1))))
+        {
+            uint agency = Enumerable.Range(0, sq.Length - 3).Select(i => Bytes.U32(sq, i)).FirstOrDefault(agencies.Contains);
+            if (agency == 0) throw new ArgumentException($"squad {Bytes.U32(sq, 1):x}: names no agency the world state knows");
+            var body = Bytes.Concat(Bytes.Le(0x80000006), new byte[1], Bytes.Le(17u, 1u), BitConverter.GetBytes(0f), Bytes.Le(0u, 0u), new byte[] { 1 },
+                                    Bytes.Le(Bytes.U32(sq, 31)), Bytes.Le(0x80000001), new byte[1], Bytes.Le(8u, 0u, agency), Bytes.Le(Bytes.U32(sq, 1), 5u));
+            records.Add(Bytes.Concat(Bytes.Le(WaveEvent, 0x80000003), new byte[1], Bytes.Le((uint)body.Length), body));
+        }
+        if (records.Count == 0) return 0;
+        var add = Bytes.Concat(records.ToArray());
+        var outp = Bytes.Concat(ws[..end], add, ws[end..]);
+        Bytes.PutU32(outp, block, (uint)(size + add.Length));
+        Bytes.PutU32(outp, block + 8, (uint)(count + records.Count));
+        Bytes.PutU32(outp, 21, Bytes.U32(ws, 21) + (uint)add.Length);
+        if (fresh) map.AddEntities(new[] { outp }); else map.SetEntity(Bytes.U32(outp, 8), outp);
+        return records.Count;
+    }
+
+    /// <summary>A squad entry ([01][u32 id][u32 1] + prop 0x3eb { prop 0x28 { [u32 squad id][u32 wave] ...) with its wave
+    /// set to <paramref name="wave"/> (hex); unchanged when that's null or empty.</summary>
+    public static byte[] WithWave(byte[] entry, string? wave)
+    {
+        if (wave is not { Length: > 0 }) return entry;
+        if (entry.Length < 35 || entry[0] != 1 || Bytes.U32(entry, 9) != 0x800003eb || Bytes.U32(entry, 18) != 0x80000028)
+            throw new ArgumentException("wave: the squad entry isn't [01][id][1] + prop 0x3eb { prop 0x28 }");
+        var e = (byte[])entry.Clone();
+        Bytes.PutU32(e, 31, Convert.ToUInt32(wave, 16));
+        return e;
+    }
+
+    /// <summary>An agent entity, its companion and squad with the template's character class (entity @56) replaced by
+    /// <paramref name="cls"/> (hex) wherever it appears (entity, squad member records); unchanged when that's empty.</summary>
+    public static (byte[] Entity, byte[] Companion, byte[] Squad) WithClass(byte[] entity, byte[] companion, byte[] squad, string? cls)
+    {
+        if (cls is not { Length: > 0 }) return (entity, companion, squad);
+        uint from = Bytes.U32(entity, 56), to = Convert.ToUInt32(cls, 16);
+        var r = (Entity: (byte[])entity.Clone(), Companion: (byte[])companion.Clone(), Squad: (byte[])squad.Clone());
+        foreach (var b in new[] { r.Entity, r.Companion, r.Squad }) Replace(b, new HashSet<uint> { from }, to);
+        return r;
+    }
+
+    /// <summary>A character entity with its running behaviour tree set to <paramref name="tree"/> (hex); unchanged when that's
+    /// empty. Characters store the tree they run at @240 after a u32 999 (saved agents keep it: the class's DefaultBT
+    /// only applies at spawn). Minions store 0x00313fd4 (EG Idle) there.</summary>
+    /// <summary>A tree of one plain Idle step: an agent running it stands where it's placed and still fights.</summary>
+    public const string GuardTree = "b37c4130";
+
+    public static byte[] WithTree(byte[] entity, string? tree)
+    {
+        if (tree is not { Length: > 0 }) return entity;
+        if (entity.Length < 244 || Bytes.U32(entity, 236) != 999) throw new ArgumentException("tree: the entity has no behaviour tree at @240");
+        var e = (byte[])entity.Clone();
+        Bytes.PutU32(e, 240, Convert.ToUInt32(tree, 16));
+        return e;
+    }
+
+    const uint DefaultBT = 0xa6775653, TreeType = 0x81b4b921;
+
+    /// <summary>
+    /// A class tree BLUE chunk with class <paramref name="cls"/>'s DefaultBT set to <paramref name="tree"/>, same size;
+    /// null when the chunk has no such object, or the class neither sets DefaultBT itself nor has a 4-byte override equal
+    /// to its parent's (which then becomes the DefaultBT member).
+    /// <para>BLUE: [1][0][1][root][u32 count] + objects [id][0x0d][id][parent][u32 n] + n members [key][flag][type][0]
+    /// [kind] + value (kind 0, 1, 3: 4 bytes; 2: 1 byte; 4: [u32 len] + chars).</para>
+    /// </summary>
+    public static byte[]? WithDefaultTree(byte[] blue, uint cls, uint tree)
+    {
+        if (blue.Length < 20 || Bytes.U32(blue, 0) != 1) return null;
+        var objs = new Dictionary<uint, (uint Parent, List<(uint Key, int At, uint Kind)> Members)>();
+        try
+        {
+            for (int i = 0, n = (int)Bytes.U32(blue, 16), p = 20; i < n; i++)
+            {
+                if (Bytes.U32(blue, p + 4) != 0x0d) return null;
+                uint id = Bytes.U32(blue, p), parent = Bytes.U32(blue, p + 12);
+                int m = (int)Bytes.U32(blue, p + 16);
+                p += 20;
+                var members = new List<(uint, int, uint)>();
+                for (int k = 0; k < m; k++)
+                {
+                    uint kind = Bytes.U32(blue, p + 16);
+                    members.Add((Bytes.U32(blue, p), p, kind));
+                    p += 20 + kind switch { 0 or 1 or 3 => 4, 2 => 1, 4 => 4 + (int)Bytes.U32(blue, p + 20), _ => throw new InvalidDataException() };
+                }
+                objs.TryAdd(id, (parent, members));
+            }
+        }
+        catch (Exception x) when (x is InvalidDataException or ArgumentOutOfRangeException or IndexOutOfRangeException) { return null; }
+        if (!objs.TryGetValue(cls, out var obj)) return null;
+        var outp = (byte[])blue.Clone();
+        if (obj.Members.FirstOrDefault(x => x.Key == DefaultBT) is { At: > 0 } own) { Bytes.PutU32(outp, own.At + 20, tree); return outp; }
+        uint? Inherited(uint key, uint from)
+        {
+            for (uint o = from; objs.TryGetValue(o, out var x); o = x.Parent)
+                if (x.Members.FirstOrDefault(y => y.Key == key) is { At: > 0 } hit) return hit.Kind is 0 or 1 or 3 ? Bytes.U32(blue, hit.At + 20) : null;
+            return null;
+        }
+        // ponytail: reuses a redundant override; a class without one would need the chunk to grow (it can't: common.asr is memory-mapped)
+        foreach (var (key, at, kind) in obj.Members)
+        {
+            if (kind is not (0 or 1 or 3) || Bytes.U32(blue, at + 4) != 3 || Inherited(key, obj.Parent) != Bytes.U32(blue, at + 20)) continue;
+            Bytes.PutU32(outp, at, DefaultBT); Bytes.PutU32(outp, at + 8, TreeType); Bytes.PutU32(outp, at + 16, 3); Bytes.PutU32(outp, at + 20, tree);
+            return outp;
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// A one-member squad set up the way Divers patrol: the member's target furniture types (record +36 after its current
+    /// targets: [u32 m][u32 16] + m x fnas) are the types of <paramref name="objects"/> (grid object ids on the map), and
+    /// the squad's target list (prop 0x28's prop 4: [u32 n] + n x ([01] + prop 0xa {u32 index, u32 object id, u32 fnas,
+    /// u32 0, u32 1, u32 flags 0, u32 member, u32 999, u32 0})) names those objects. <paramref name="state"/> sets the
+    /// member's state byte (Soldiers 7, Divers 8) when given. Works with a wave of WaveTargetType 2.
+    /// </summary>
+    public static byte[] WithPatrol(byte[] entry, LairMap map, IReadOnlyList<uint> objects, byte? state = null)
+    {
+        var byId = map.Objects.GroupBy(o => o.Id).ToDictionary(g => g.Key, g => g.First());
+        var missing = objects.Where(o => !byId.ContainsKey(o)).ToList();
+        if (missing.Count > 0) throw new ArgumentException($"patrol: no object {string.Join(", ", missing.Select(m => m.ToString("x")))} on this map");
+        var (p3eb, lists) = Parse(entry);
+        var mem = (RawNode)lists[0].Children[0];
+        if (Bytes.U32(mem.Data, 0) != 1) throw new ArgumentException("patrol: the squad must have one member");
+        var rec = Records(entry)[0];
+        int at = rec.Start + 32;
+        at += 4 + 9 * (int)Bytes.U32(mem.Data, at);
+        int m = (int)Bytes.U32(mem.Data, at);
+        if (Bytes.U32(mem.Data, at + 4) != 16) throw new ArgumentException("patrol: the member record isn't the layout we know");
+        var types = objects.Select(o => byId[o].Fnas).Distinct().ToList();
+        var tail = mem.Data[(at + 8 + 4 * m)..];
+        if (state is { } st) tail[8] = st;   // f32, f32, u8 state
+        mem.Data = Bytes.Concat(mem.Data[..at], Bytes.Le((uint)types.Count, 16u), Bytes.Le(types.ToArray()), tail);
+
+        var p28 = p3eb.Children.OfType<Prop>().First(p => p.Id == 0x28);
+        int i4 = p28.Children.FindIndex(c => c is Prop { Id: 4 });
+        if (i4 < 0) throw new ArgumentException("patrol: the squad has no target list");
+        var targets = objects.Select((o, k) => Bytes.Concat(new byte[] { 1 }, Bytes.Le(0x8000000a), new byte[1], Bytes.Le(36u,
+            (uint)k, o, byId[o].Fnas, 0u, 1u, 0u, rec.Id, 999u, 0u)));
+        var old = (Prop)p28.Children[i4];
+        p28.Children[i4] = new Prop(old.Key, old.Kind, new List<PropNode> { new RawNode(Bytes.Concat(targets.Prepend(Bytes.Le((uint)objects.Count)).ToArray())) });
+        return Bytes.Concat(entry[..9], p3eb.ToBytes());
+    }
+
     // ------------------------------------------------------------------ templates
 
     static List<Template>? _bundled, _saved;

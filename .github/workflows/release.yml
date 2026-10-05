@@ -32,11 +32,6 @@ jobs:
         shell: cmd
         run: modkit\native\winmm\build.cmd
 
-      - name: Publish
-        run: |
-          dotnet publish modkit/src/Eg2.ModManager -p:PublishProfile=FolderProfile -o out/modkit
-          dotnet publish modkit/src/Eg2.ModInstaller -p:PublishProfile=FolderProfile -o out/installer
-
       - name: Next version
         id: ver
         run: |
@@ -45,6 +40,11 @@ jobs:
           IFS=. read -r major minor patch <<< "$last"
           v="${major:-1}.${minor:-0}.$(( ${patch:--1} + 1 ))"
           echo "v=$v" >> "$GITHUB_OUTPUT"
+
+      - name: Publish
+        run: |
+          dotnet publish modkit/src/Eg2.ModManager -p:PublishProfile=FolderProfile -p:Version=${{ steps.ver.outputs.v }} -o out/modkit
+          dotnet publish modkit/src/Eg2.ModInstaller -p:PublishProfile=FolderProfile -p:Version=${{ steps.ver.outputs.v }} -o out/installer
 
       - name: Package
         run: |

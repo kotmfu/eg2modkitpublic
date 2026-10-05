@@ -1,0 +1,5 @@
+# Trap animations (`trpa`)
+
+Part of the [file format reference](../REFERENCE.md): [4.35 Map and save state, more data objects](../REFERENCE.md#435-map-and-save-state-more-data-objects).
+
+**Trap animations (`trpa`, 24, referenced by 17 `fntr` records).** Prop 3 { set } `[u8 has second set]` + an optional second set (4 objects). A set is prop 3 { `[u32 25]` + 25 slots, 24 bytes }. A slot is prop 1 { `[u32 n]` + n `[u32 phase]` prop 1 { `[u32 m]` + m animation hashes } }. Phases are KeyHash `mount`, `loop`, `dismount`, `wallmount`, `wallloop`, `walldismount` (Giant Fan, Giant Magnet) and three more on the Pinball Bumper and Test Chamber corner trap whose animations are `BounceOff_Mount/Loop/Dismount_A_01`. Animations are named like `Trap_Laser_Mount_C_01`. Most traps fill all 25 slots; the fan, magnet, pinball and corner traps leave slots 9, 17, 19, 20 and 22 short or empty, so the slots are probably per character body type. The 24 bytes after the slots: f32 quaternion (0,0,0,1; the magnet 0,1,0,0), an f32 (0, or 9.2 to 30), and 4 u8 flags.

@@ -24,6 +24,8 @@ public sealed class Tweak
 
     // exactly one of these
     public RuntimePatch? Runtime { get; init; }
+    /// <summary>Fixed runtime patches switched on and off together (values preset).</summary>
+    public IReadOnlyList<RuntimePatch>? Runtimes { get; init; }
     public FieldEdit? Field { get; init; }
     /// <summary>Fixed field edits switched on and off together (values preset).</summary>
     public List<FieldEdit>? Fields { get; init; }
@@ -34,6 +36,7 @@ public sealed class Tweak
     public string? Video { get; init; }
 
     public bool IsIn(ModDefinition m) => Video is not null ? m.SkipVideos.Contains(Video, StringComparer.OrdinalIgnoreCase)
+        : Runtimes is not null ? m.Runtime.Any(InRuntimes)
         : Fields is not null ? m.FieldEdits.Any(Shift ? InSlots : InFields)
         : Runtime is not null
         ? m.Runtime.Any(r => r.Name.Equals(Runtime.Name, StringComparison.OrdinalIgnoreCase))
@@ -42,7 +45,7 @@ public sealed class Tweak
     public string? ValueIn(ModDefinition m) => Shift
         ? Fields!.Select(f => (f, e: m.FieldEdits.FirstOrDefault(e => SameSlot(e, f)))).FirstOrDefault(x => x.e is not null) is ({ } f0, { } e0)
             ? (int.Parse(e0.Value) - int.Parse(f0.Value) + int.Parse(Default!)).ToString() : null
-        : Video is not null || Fields is not null ? (IsIn(m) ? "1" : null)
+        : Video is not null || Fields is not null || Runtimes is not null ? (IsIn(m) ? "1" : null)
         : Runtime is not null
         ? m.Runtime.FirstOrDefault(r => r.Name.Equals(Runtime.Name, StringComparison.OrdinalIgnoreCase))?.Value
         : m.FieldEdits.FirstOrDefault(Same)?.Value;
@@ -51,6 +54,7 @@ public sealed class Tweak
     {
         if (Video is not null) m.SkipVideos.RemoveAll(v => v.Equals(Video, StringComparison.OrdinalIgnoreCase));
         else if (Runtime is not null) m.Runtime.RemoveAll(r => r.Name.Equals(Runtime.Name, StringComparison.OrdinalIgnoreCase));
+        else if (Runtimes is not null) m.Runtime.RemoveAll(InRuntimes);
         else if (Fields is not null) m.FieldEdits.RemoveAll(Shift ? InSlots : InFields);
         else m.FieldEdits.RemoveAll(Same);
         if (Key == "minion_hard_cap")
@@ -76,6 +80,7 @@ public sealed class Tweak
         Remove(m);
         if (Video is not null) m.SkipVideos.Add(Video);
         else if (Runtime is not null) { var r = Runtime.Copy(); r.Value = value; m.Runtime.Add(r); }
+        else if (Runtimes is not null) m.Runtime.AddRange(Runtimes.Select(r => r.Copy()));
         else if (Fields is not null)
         {
             m.FieldEdits.RemoveAll(InSlots);   // manual values on the same slots give way
@@ -99,6 +104,7 @@ public sealed class Tweak
     /// <summary>One of this switch's own edits (same slot and preset value), so switching off keeps manual values there.</summary>
     bool InFields(FieldEdit e) => Fields!.Any(f => SameSlot(e, f) && e.Value == f.Value);
     bool InSlots(FieldEdit e) => Fields!.Any(f => SameSlot(e, f));
+    bool InRuntimes(RuntimePatch r) => Runtimes!.Any(x => x.Name.Equals(r.Name, StringComparison.OrdinalIgnoreCase));
 }
 
 public static class QuickTweaks
@@ -114,7 +120,7 @@ public static class QuickTweaks
         ["instant_minion_training"] = ("Developer switches", "Instant minion training", "", "off", true),
         ["freeze_minion_stats"] = ("Developer switches", "Freeze minion stats", "", "off", true),
         ["unlock_all"] = ("Developer switches", "Unlock everything (experimental)", "Untested; use a throwaway save.", "off", true),
-        ["default_base_power"] = ("Developer switches", "Base power", "Read from the game: 1000000 (probably thousandths, so 1000 power). Lower values mean less power.", "1000000", false),
+        ["default_base_power"] = ("Developer switches", "Base power", "Same units as the power shown in game. Read from the game: 1000000.", "1000000", false),
         ["minimum_power"] = ("Developer switches", "Minimum power", "Read from the game: -9999.", "-9999", false),
         ["salary_rate"] = ("Gold", "Salary rate (experimental)", "What payday multiplies your minions' salaries by, from the difficulty preset. Untested: the game's own value shows in bin\\eg2modkit.log as \"[salary_rate] found ...\" (if it isn't 1, it's a per-minion amount; set yours relative to it). 0 = no salaries.", "1", false),
         ["intel_cap_save"] = ("Intel and Tech", "Intel cap in existing saves", "Rewrites the cap stored in whatever save you load (runs with the game).", "99", false),
@@ -133,6 +139,8 @@ public static class QuickTweaks
         }
         list.Add(new Tweak { Key = "skip_intro", Group = "Startup", Label = "Skip the Rebellion intro video", Default = "off", IsFlag = true, Video = "fmv/rebellion.webm",
                              Help = "The studio logo video at launch (runs with the game)." });
+        list.Add(new Tweak { Key = "side_stories_at_once", Group = "Objectives", Label = "Several side stories at once", Default = "off", IsFlag = true, Runtimes = RuntimePresets.SideStories,
+                             Help = "Start or resume a side story while another one runs (changes game code while the game runs). A save with several running may need this kept on." });
         if (game is null) return list;
 
         // "Minion Cap Increase 1..5" research: the Increase node's Value (10/15/20/25/30 in the base game)
@@ -340,7 +348,50 @@ public static class QuickTweaks
         return list;
     }
 
-    static Tweak FieldTweak(GameObject o, string group, string label, int offset, string type, string value, string help = "") => new()
+    /// <summary>
+    /// Doomsday device firing levels (rdfl). After prop 9's [u32 0] and its faction → scheme pool list, the record holds
+    /// i32 effect amount (+0), flags (+4), f32 extras (+12..+32, only V.E.N.O.M. sets them), name (+36) and description
+    /// (+52) text refs, i32 days the effect lasts (+68), f32 30/45/60 (+72), f32 per device (+76), f32 area (+80; 1275 on
+    /// the whole-world shot). The device and level come from the description's key, e.g. DOOMSDAY_DEVICE_MAX_FIRINGSTRENGTH_2_DESC.
+    /// </summary>
+    public static List<Tweak> Doomsday(GameData game)
+    {
+        var inv = System.Globalization.CultureInfo.InvariantCulture;
+        var devices = new Dictionary<string, string>
+        {
+            ["MAX"] = "M.I.D.A.S. (Max)", ["EMMA"] = "V.E.N.O.M. (Emma)", ["IVAN"] = "H.A.V.O.C. (Red Ivan)",
+            ["ZALIKA"] = "V.O.I.D. (Zalika)", ["OCEANS"] = "Z.E.R.O. (Oceans)",
+        };
+        var rx = new System.Text.RegularExpressions.Regex("^DOOMSDAY_DEVICE_([A-Z]+)_FIRINGSTRENGTH_(TESTFIRE_)?([0-9]|ENDGAME)_DESC$");
+        var rows = new List<(string Item, GameObject O, int At)>();
+        foreach (var o in game.Objects.Where(o => o.Tag == "rdfl" && o.Body.Length >= 50))
+        {
+            int at = 46 + (int)Bytes.U32(o.Body, 42);
+            if (at + 84 > o.Body.Length || !game.Text.TryGetValue(Bytes.U32(o.Body, at + 64), out var d) || rx.Match(d.Key) is not { Success: true } m) continue;
+            string level = m.Groups[3].Value == "ENDGAME" ? "Final shot" : m.Groups[2].Success ? $"Test fire {m.Groups[3].Value}" : $"Level {m.Groups[3].Value}";
+            // Z.E.R.O.'s test fire borrows Emma's description; its own name says which device it is
+            string device = o.Name.Contains("Z.E.R.O.") ? "OCEANS" : m.Groups[1].Value;
+            rows.Add(($"{devices.GetValueOrDefault(device, device)}: {level}", o, at));
+        }
+        var list = new List<Tweak>();
+        foreach (var (item, o, at) in rows.OrderBy(r => r.Item, StringComparer.Ordinal))
+        {
+            string F(int k) => BitConverter.ToSingle(o.Body, at + k).ToString("G6", inv);
+            list.Add(FieldTweak(o, item, "Effect amount", at, "i32", BitConverter.ToInt32(o.Body, at).ToString(),
+                "The level's main number. Its scale and sign differ per device (M.I.D.A.S. 10/25/50, V.E.N.O.M. -100/-150/-200, final shots 300). Unconfirmed what it changes."));
+            list.Add(FieldTweak(o, item, "Days the effect lasts", at + 68, "i32", BitConverter.ToInt32(o.Body, at + 68).ToString(),
+                "How long the region stays affected (Z.E.R.O. 10/25/50 days, test fires 0)."));
+            for (int k = 12; k <= 32; k += 4)
+                if (BitConverter.ToSingle(o.Body, at + k) != 0)
+                    list.Add(FieldTweak(o, item, $"Extra value {(k - 12) / 4 + 1}", at + k, "f32", F(k), "Only V.E.N.O.M. sets these (-20/-60/-90). Unconfirmed."));
+            list.Add(FieldTweak(o, item, "Timer (30, 45 or 60)", at + 72, "f32", F(72), "Unconfirmed: probably a charge or cooldown time."));
+            list.Add(FieldTweak(o, item, "Device value", at + 76, "f32", F(76), "Same for every level of a device (7.66 to 15.29). Unconfirmed."));
+            list.Add(FieldTweak(o, item, "Area", at + 80, "f32", F(80), "3 for one region; 1275 on Z.E.R.O.'s whole-world shot. Probably the area hit."));
+        }
+        return list;
+    }
+
+    static Tweak FieldTweak(GameObject o, string group,string label, int offset, string type, string value, string help = "") => new()
     {
         Key = $"{o.Package}:{o.Tag}:{o.Key}:{offset}", Group = group, Label = label, Help = help, Default = value,
         Min = type == "u32" ? 0 : -10_000_000,

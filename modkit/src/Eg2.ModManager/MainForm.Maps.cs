@@ -95,12 +95,18 @@ sealed partial class MainForm
     void LoadMaps()
     {
         if (_game is null || _lairList.Items.Count > 0) return;
-        var dir = _game.Install.Full(MapDir);
-        if (!Directory.Exists(dir)) return;
-        foreach (var f in Directory.GetFiles(dir, "lair_*.base").Order()) _lairList.Items.Add(Path.Combine(MapDir, Path.GetFileName(f)));
-        foreach (var f in ModsInList().SelectMany(m => m.NewLairs).Select(n => Path.Combine(MapDir, n.Stem + ".base")))
-            if (!_lairList.Items.Contains(f)) _lairList.Items.Add(f);
+        foreach (var f in LairFiles()) _lairList.Items.Add(f);
         if (_lairList.Items.Count > 0) _lairList.SelectedIndex = 0;
+    }
+
+    /// <summary>Every lair map: the game's, then the ones mods add.</summary>
+    List<string> LairFiles()
+    {
+        var dir = _game!.Install.Full(MapDir);
+        if (!Directory.Exists(dir)) return new();
+        var files = Directory.GetFiles(dir, "lair_*.base").Order().Select(f => Path.Combine(MapDir, Path.GetFileName(f))).ToList();
+        files.AddRange(ModsInList().SelectMany(m => m.NewLairs).Select(n => Path.Combine(MapDir, n.Stem + ".base")).Where(f => !files.Contains(f)));
+        return files;
     }
 
     IEnumerable<MapEdit> EditsFor(ModDefinition? m, string file) =>
@@ -359,16 +365,18 @@ sealed partial class MainForm
         foreach (var c in choices) list.Items.Add($"{c.T.Kind}   vitality {c.T.Vitality:0}   ({c.From})");
         list.SelectedIndex = 0;
         var ok = new Button { Text = "Place", DialogResult = DialogResult.OK, AutoSize = true };
+        var guard = new CheckBox { Text = "Guard (stays where it's placed)", AutoSize = true, Margin = new Padding(12, 6, 3, 3) };
         list.DoubleClick += (_, _) => dlg.DialogResult = DialogResult.OK;
         dlg.Controls.Add(list);
         dlg.Controls.Add(Hint("Experimental. Agents act like a normal raid of their kind (Soldiers fight, Investigators snoop), each in a squad of their own, " +
-                              "starting where you put them. Place several for a bigger raid."));
-        dlg.Controls.Add(Bar(ok));
+                              "starting where you put them. Place several for a bigger raid. A guard stands still and fights what comes to it."));
+        dlg.Controls.Add(Bar(ok, guard));
         if (dlg.ShowDialog(this) != DialogResult.OK || list.SelectedIndex < 0) return;
         var pick = choices[list.SelectedIndex].T;
         AddMapEdit(new MapEdit
         {
-            Action = "agent", Note = $"{pick.Kind} ({choices[list.SelectedIndex].From})",
+            Action = "agent", Note = $"{(guard.Checked ? "guard: " : "")}{pick.Kind} ({choices[list.SelectedIndex].From})",
+            Tree = guard.Checked ? Agents.GuardTree : null,
             Template = pick.Entity + " " + pick.Companion, Squad = pick.Squad, Vehicle = $"{pick.Vehicle:x}:{pick.VehicleType:x}",
         }, needsArea: false);
     }

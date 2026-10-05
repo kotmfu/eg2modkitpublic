@@ -38,6 +38,7 @@ sealed partial class MainForm
         Add(Card("Furniture effects", "What using a piece of furniture does to a minion's stats.", GridPage("Furniture Effects")));
         Add(Card("Research trees", "Move research around, change what unlocks what, add new research.", _treesPage!));
         Add(Card("Lair maps", "Dig out, fill in and furnish the underground lair of any island (new games).", _mapsPage!));
+        Add(Card("Scenario", "Enemy agents waiting in a lair, guards that hold their ground, and the raid a new game opens with.", _scenarioPage!));
         Add(Card("Islands", "Hide, move or copy the scenery around an island, or make a new island.", _islandPage!));
         Add(Card("My mods", "Your mods and everything each one changes: names, texts, prices, art, sounds.", _modsPage));
         Add(Line("Browse game data and Game files (every object, texture and sound in the game) are under Settings → \"Show advanced tools\"."));

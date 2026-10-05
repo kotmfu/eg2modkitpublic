@@ -156,6 +156,26 @@ sealed partial class MainForm
                 rows.Add(new ChangeRow("Script structure", RefName(e.Object), $"{(string.IsNullOrEmpty(e.Graph) ? "" : $"\"{e.Graph}\": ")}{e.Note ?? e.Op}"));
                 _changeActions.Add((() => OpenInBrowse(e.Object), () => m.GraphEdits.Remove(e)));
             }
+            foreach (var c in m.NewClips)
+            {
+                rows.Add(new ChangeRow("New animation", c.Name, $"{c.Note ?? c.Source} (in {c.Package})"));
+                _changeActions.Add((() => Warn("New animations are made on the Assets page (Add as a new animation)."), () => m.NewClips.Remove(c)));
+            }
+            foreach (var s in m.ClipSwaps)
+            {
+                rows.Add(new ChangeRow("Animation swap", s.From, s.Note ?? $"plays {s.To} instead"));
+                _changeActions.Add((() => Warn("Animation swaps are made on the Assets page (Play another animation here)."), () => m.ClipSwaps.Remove(s)));
+            }
+            foreach (var c in m.ClassTrees)
+            {
+                rows.Add(new ChangeRow("Class behaviour", c.Class, c.Note ?? $"runs tree {c.Tree}"));
+                _changeActions.Add((() => Warn("Class behaviour trees are set in the mod's JSON (classTrees)."), () => m.ClassTrees.Remove(c)));
+            }
+            foreach (var e in m.TreeEdits)
+            {
+                rows.Add(new ChangeRow("Behaviour tree", e.Tree, $"{e.Note ?? $"step {e.Step}, {e.Field ?? $"setting {e.Setting + 1}"}"}: {e.Expect} -> {e.Value}"));
+                _changeActions.Add((async () => await ShowBehaviourTrees(), () => m.TreeEdits.Remove(e)));
+            }
         }
         _changesGrid.DataSource = rows;
         if (_changesGrid.Columns["Details"] is { } d) d.FillWeight = 300;

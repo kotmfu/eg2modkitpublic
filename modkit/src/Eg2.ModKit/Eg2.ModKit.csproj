@@ -8,5 +8,6 @@
     <ProjectReference Include="..\Eg2.Asura\Eg2.Asura.csproj" />
     <EmbeddedResource Include="..\..\reference\golden.json" LogicalName="golden.json" />
     <EmbeddedResource Include="data\agents.json" LogicalName="agents.json" Condition="Exists('data\agents.json')" />
+    <EmbeddedResource Include="data\worldstate.bin" LogicalName="worldstate.bin" />
   </ItemGroup>
 </Project>

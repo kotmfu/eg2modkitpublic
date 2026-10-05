@@ -40,6 +40,10 @@ public sealed class LairMap
     public static readonly uint[] SpareSettings =
         { 0x22ff087c, 0xd973b485, 0x380c8287, 0xcfe6d8b0, 0x8e4ad0bc, 0x26c264e4, 0xb1f2b514, 0x3c2c5565, 0x3be28d84, 0x66ce95d9, 0x518165e1 };
 
+    /// <summary>Spares used only when no pair of <see cref="SpareSettings"/> has room: large_island_200x200 (entry 0, beside spare
+    /// Island_Test), named by nothing outside its own entry.</summary>
+    public static readonly uint[] LastResortSettings = { 0x85201846 };
+
     const uint StringClass = 0x55f89b99;
 
     /// <summary>Probe: the settings chunk with the first spare test level's entry under another id (same size, same place).</summary>
@@ -89,11 +93,13 @@ public sealed class LairMap
             if (Bytes.U32(entry, i) == StringClass && Bytes.U32(entry, i + 4) == 0 && Bytes.U32(entry, i + 8) == 4) str = i - 8;
         if (str < 0) return null;
         const int PadHeader = 24;   // key, 3, string class, 0, 4, length
-        // two adjacent spares (the entry and the stub take their two slots) that hold entry + pad member + stub
-        for (int k0 = 0; k0 + 1 < entries.Count; k0++)
+        // two adjacent spares (the entry and the stub take their two slots) that hold entry + pad member + stub;
+        // pairs of the original spares first, then pairs using a last-resort one
+        bool Spare(int k, bool last) => SpareSettings.Contains(Bytes.U32(entries[k], 0)) || last && LastResortSettings.Contains(Bytes.U32(entries[k], 0));
+        foreach (var (k0, last) in Enumerable.Range(0, entries.Count - 1).Select(k => (k, false)).Concat(Enumerable.Range(0, entries.Count - 1).Select(k => (k, true))))
         {
             int k1 = k0 + 1;
-            if (!SpareSettings.Contains(Bytes.U32(entries[k0], 0)) || !SpareSettings.Contains(Bytes.U32(entries[k1], 0))) continue;
+            if (!Spare(k0, last) || !Spare(k1, last)) continue;
             int room = End(k1) - starts[k0], pad = room - entry.Length - stub.Length - PadHeader;
             if (pad < 0) continue;
             var padMember = new byte[PadHeader + pad];
@@ -408,6 +414,15 @@ public sealed class LairMap
         int at = _arc.Chunks.FindLastIndex(c => c.Tag == "ENTI") + 1;
         _arc.Chunks.InsertRange(at, bodies.Select(b => new Chunk("ENTI", b)));
         return bodies.Count;
+    }
+
+    /// <summary>Replaces the body of entity <paramref name="id"/> (the body keeps that id).</summary>
+    public void SetEntity(uint id, byte[] body)
+    {
+        var c = _arc.Chunks.FirstOrDefault(c => c.Tag == "ENTI" && c.Body.Length >= 12 && Bytes.U32(c.Body, 8) == id)
+                ?? throw new ArgumentException($"entity {id:x} is not on this map");
+        if (Bytes.U32(body, 8) != id) throw new ArgumentException("the new body has another id");
+        c.Body = body;
     }
 
     /// <summary>The map's lair id (bsnf +17 = KeyHash of the lair stem); a save carries its lair's.</summary>

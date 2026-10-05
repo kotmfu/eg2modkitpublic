@@ -72,7 +72,7 @@ sealed partial class MainForm : Form
         _split.Panel1.Controls.Add(_nav);
         _split.Panel2.Controls.Add(_log);
         var strip = new StatusStrip();
-        strip.Items.AddRange(new ToolStripItem[] { _status, _progress, _cancel, _logToggle });
+        strip.Items.AddRange(new ToolStripItem[] { _status, _progress, _cancel, _update, _logToggle });
         _cancel.Click += (_, _) => _cts?.Cancel();
         _logToggle.Click += (_, _) => ShowLog(_split.Panel2Collapsed);
         Controls.Add(_split);
@@ -96,9 +96,14 @@ sealed partial class MainForm : Form
             "How many henchmen you can hire. Each recruit mission and crime-lord story checks it separately: \"Henchman limit\" (5 in the game) and, " +
             "in the stories, \"limit - 1\" for when a recruit is already on the way. For the usual case use \"Henchman limit\" in Quick tweaks. Saved in the \"Quick tweaks\" mod.",
             QuickTweaks.Henchmen));
+        _tabs.TabPages.Add(TweakGridPage("Doomsday",
+            "Doomsday device firing levels: each device's test fires, levels 1-3 and final shot. \"Days the effect lasts\" matches the game's own descriptions; " +
+            "the other numbers are still unconfirmed. Type a new value in \"Your value\", clear it to go back to the game's. Saved in the \"Quick tweaks\" mod.",
+            QuickTweaks.Doomsday));
         _tabs.TabPages.Add(_furniturePage = FurniturePage());
         _tabs.TabPages.Add(_treesPage = TreesPage());
         _tabs.TabPages.Add(_mapsPage = MapsPage());
+        _tabs.TabPages.Add(_scenarioPage = ScenarioPage());
         _tabs.TabPages.Add(_islandPage = IslandPage());
         _tabs.TabPages.Add(_modsPage = ModsPage());
         _tabs.TabPages.Add(_browsePage = BrowsePage());
@@ -119,6 +124,7 @@ sealed partial class MainForm : Form
             if (e.TabPage == _treesPage) LoadTrees();
             if (e.TabPage == _furniturePage) LoadFurniturePage();
             if (e.TabPage == _mapsPage) LoadMaps();
+            if (e.TabPage == _scenarioPage) LoadScenario();
             if (e.TabPage == _islandPage) LoadIslands();
             UpdateTargets();
         };
@@ -131,6 +137,7 @@ sealed partial class MainForm : Form
         LoadTweaks();
         RefreshInstalled();
         Activated += (_, _) => ReloadChangedMods();   // picks up mods edited outside while the window was in the background
+        Shown += (_, _) => _ = CheckForUpdate();
         Shown += async (_, _) =>
         {
             if (GameInstall.Validate(_gamePath.Text) is null) await LoadGameData();
@@ -319,8 +326,10 @@ sealed partial class MainForm : Form
         if (!await Run("Loading game data", (log, ct) => g = GameData.Load(new GameInstall(root), lang, log, ct))) return;
         _game = g!;
         _assets = null;
+        _skeletons = null;
         _guiNames = null;
         _nodeCatalog = null;
+        _trees = null;
         _dataStatus.Text = $"{_game.Furniture.Count} furniture items, {_game.Objects.Count:N0} objects, {_game.Text.Count:N0} text entries ({lang}).";
         _status.Text = "Ready.";
         BrowseLoaded();

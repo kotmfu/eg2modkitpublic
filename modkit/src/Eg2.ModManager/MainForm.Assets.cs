@@ -19,6 +19,7 @@ sealed partial class MainForm
     readonly Label _assetCount = new() { Dock = DockStyle.Bottom, Height = 22, ForeColor = Theme.Muted };
     TabPage _assetsPage = null!;
     List<AssetEntry>? _assets;
+    List<Skeleton>? _skeletons;
     HashSet<string> _replaced = new();
     string? _lastExtractDir;
 
@@ -57,6 +58,8 @@ sealed partial class MainForm
                      Btn("Extract everything shown…", async (_, _) => await ExtractAssets(ShownAssets())),
                      Btn("Dump all game assets…", async (_, _) => await ExtractAssets(_assets ?? new())),
                      Btn("Replace with my file…", (_, _) => ReplaceAsset()),
+                     Btn("Add as a new animation…", (_, _) => AddNewClip()),
+                     Btn("Play another animation here…", (_, _) => SwapClip()),
                      Btn("Recolour textures…", (_, _) => RecolourAssets()),
                      Btn("Undo replacement", (_, _) => UndoReplacement()),
                  })
@@ -73,7 +76,7 @@ sealed partial class MainForm
         page.Controls.Add(left);
         page.Controls.Add(right);
         page.Controls.Add(Hint("Every sound, texture, mesh, animation and model in the game. Extract gives you WAV (sounds), PNG or DDS (textures) and OBJ (meshes: edit in Blender, " +
-                               "replace with your OBJ); animations and skeletons are the engine's own format (swap them with other game files). Bold = replaced by a mod. " +
+                               "replace with your OBJ) and glTF (animations: edit in Blender, replace or add as a new one); skeletons are the engine's own format. Bold = replaced by a mod. " +
                                "Textures in the textures folder's blobs are the high-res versions; package copies are low-res fallbacks and GUI icons."));
         return page;
     }
@@ -140,6 +143,7 @@ sealed partial class MainForm
                     Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
                     // PNG: most tools can't open the game's BC7 DDS; formats Dds can't decode stay DDS
                     if (png && e.Kind == "Texture" && Dds.Decode(data, out int w, out int h) is { } px) SavePng(px, w, h, Path.ChangeExtension(dest, ".png"));
+                    else if (e.Kind == "Animation" && AnimationAsGltf(data, log, ct) is { } gltf) File.WriteAllText(Path.ChangeExtension(dest, ".gltf"), gltf);
                     else File.WriteAllBytes(dest, AssetIndex.ExportBytes(e, data));
                     if (++n % 250 == 0) log($"extracted {n:N0} of {list.Count:N0}");
                 }
@@ -153,7 +157,8 @@ sealed partial class MainForm
     void OpenAsset()
     {
         if (_game is null || Selected() is not [var a]) return;
-        if (a.Tag is not ("RSCF" or "ASTS")) { Warn("Animations and model skeletons are in the engine's own format; there's nothing to open them with. Extract them to swap with other game files. (Meshes open as OBJ.)"); return; }
+        if (a.Kind == "Animation") { _ = OpenAnimation(a); return; }
+        if (a.Tag is not ("RSCF" or "ASTS")) { Warn("Facial animations and model skeletons are in the engine's own format; there's nothing to open them with. Extract them to swap with other game files. (Meshes open as OBJ, animations as glTF.)"); return; }
         try
         {
             var (_, data) = AssetIndex.Read(_game.Install, new[] { a }).Single();
@@ -186,6 +191,7 @@ sealed partial class MainForm
     {
         if (Selected() is not [var a]) { Warn("Select one asset to replace."); return; }
         if (a.Kind == "Mesh") { ReplaceMesh(a); return; }
+        if (a.Kind == "Animation") { ReplaceAnimation(a); return; }
         string filter = a.Kind switch { "Sound" or "Streamed sound" => "WAV sound (*.wav)|*.wav", "Texture" => "Image (*.png;*.jpg;*.dds)|*.png;*.jpg;*.jpeg;*.dds", _ => $"Extracted {a.Tag} chunk (*.{a.Tag.ToLowerInvariant()})|*.{a.Tag.ToLowerInvariant()}|All files|*.*" };
         using var dlg = new OpenFileDialog { Filter = filter, Title = $"Replace {Path.GetFileName(a.Name)}" };
         if (dlg.ShowDialog(this) != DialogResult.OK) return;
@@ -236,6 +242,130 @@ sealed partial class MainForm
         bmp.UnlockBits(d);
         for (int i = 0; i < px.Length; i += 4) (px[i], px[i + 2]) = (px[i + 2], px[i]);   // BGRA -> RGBA
         return Dds.EncodeLike(orig, px, w, h);
+    }
+
+    /// <summary>Every model skeleton in the game (HSKN), read once: an exported animation needs its rig's bones.</summary>
+    List<Skeleton> Skeletons(Action<string> log, CancellationToken ct)
+    {
+        if (_skeletons is not null) return _skeletons;
+        log("reading model skeletons (once)");
+        var list = new List<Skeleton>();
+        foreach (var (_, body) in AssetIndex.Read(_game!.Install, (_assets ?? new()).Where(x => x.Tag == "HSKN"), ct))
+            if (Skeleton.Parse(body) is { } s) list.Add(s);
+        return _skeletons = list;
+    }
+
+    /// <summary>glTF of a clip on its rig's skeleton, or null when no skeleton shares its bones.</summary>
+    string? AnimationAsGltf(byte[] hcan, Action<string> log, CancellationToken ct)
+    {
+        var clip = Eg2.Asura.Chunks.AnimClip.Parse(hcan);
+        return AnimationGltf.SkeletonFor(clip, Skeletons(log, ct)) is { } sk ? AnimationGltf.Export(hcan, sk) : null;
+    }
+
+    async Task OpenAnimation(AssetEntry a)
+    {
+        string? dest = null;
+        if (!await Run("Exporting animation", (log, ct) =>
+            {
+                var (_, data) = AssetIndex.Read(_game!.Install, new[] { a }, ct).Single();
+                var gltf = AnimationAsGltf(data, log, ct) ?? throw new InvalidDataException("no model skeleton in the game has this animation's bones");
+                dest = Path.Combine(Path.GetTempPath(), "Eg2ModKit", "preview", Path.ChangeExtension(AssetIndex.OutputPath(a), ".gltf"));
+                Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
+                File.WriteAllText(dest, gltf);
+            })) return;
+        try { Process.Start(new ProcessStartInfo(dest!) { UseShellExecute = true }); }
+        catch (Exception e) { Warn($"Saved {dest}, but Windows has no program for .gltf files ({e.Message}). Open it in Blender: File → Import → glTF 2.0."); }
+    }
+
+    /// <summary>
+    /// Replace an animation with a glTF (.gltf/.glb, e.g. from Blender: export the game's clip first so the bone names
+    /// match), or with an extracted .hcan. The game's clip stays the template: its rig, events and effects are kept,
+    /// and bones the file lacks keep their old motion.
+    /// </summary>
+    void ReplaceAnimation(AssetEntry a)
+    {
+        if (_game is null) return;
+        using var dlg = new OpenFileDialog { Filter = "glTF animation (*.glb;*.gltf)|*.glb;*.gltf|Extracted HCAN chunk (*.hcan)|*.hcan", Title = $"Replace {a.Name}" };
+        if (dlg.ShowDialog(this) != DialogResult.OK) return;
+        if (TargetMod() is not { } mod) return;
+        byte[] data;
+        string how;
+        try
+        {
+            var (_, orig) = AssetIndex.Read(_game.Install, new[] { a }).Single();
+            if (dlg.FileName.EndsWith(".hcan", StringComparison.OrdinalIgnoreCase)) { data = File.ReadAllBytes(dlg.FileName); Eg2.Asura.Chunks.AnimClip.Parse(data); how = "raw clip"; }
+            else data = AnimationGltf.Import(orig, dlg.FileName, out how);
+        }
+        catch (Exception e) when (e is InvalidDataException or FormatException or IOException or System.Text.Json.JsonException
+                                    or IndexOutOfRangeException or ArgumentException or KeyNotFoundException or InvalidOperationException)
+        { Warn($"Couldn't use that file: {e.Message}"); return; }
+
+        if (ReferenceEquals(mod, _current)) CommitEditor();
+        StoreReplacement(mod, a, data, $"Animation: {a.Name} <- {Path.GetFileName(dlg.FileName)}");
+        mod.Save();
+        if (ReferenceEquals(mod, _current)) ShowEditor();
+        Log($"{mod.Id}: {a.Name} replaced by {dlg.FileName} ({how})");
+        _status.Text = $"\"{a.Name}\" will be replaced by \"{mod.Name}\" when you apply ({how}).";
+        FilterAssets();
+    }
+
+    /// <summary>
+    /// A new clip under its own name, made from a glTF (or .hcan) with the selected clip as the template (its rig,
+    /// events and effects). Optionally every reference to the selected clip then plays the new one.
+    /// </summary>
+    void AddNewClip()
+    {
+        if (_game is null || Selected() is not [var a] || a.Kind != "Animation") { Warn("Select one animation: the new one copies its skeleton and events."); return; }
+        using var dlg = new OpenFileDialog { Filter = "glTF animation (*.glb;*.gltf)|*.glb;*.gltf|Extracted HCAN chunk (*.hcan)|*.hcan", Title = $"New animation based on {a.Name}" };
+        if (dlg.ShowDialog(this) != DialogResult.OK) return;
+        if (Prompt("Name for the new animation (letters, digits and _; it must not be a game animation's name):", a.Name + "_new") is not { Length: > 0 } name) return;
+        if (!System.Text.RegularExpressions.Regex.IsMatch(name, "^[A-Za-z0-9_]+$")) { Warn("Use letters, digits and _ only."); return; }
+        if (_assets?.Any(x => x.Kind == "Animation" && x.Name.Equals(name, StringComparison.OrdinalIgnoreCase)) == true) { Warn($"The game already has an animation called {name}."); return; }
+        if (TargetMod() is not { } mod) return;
+        if (mod.NewClips.Any(c => c.Name.Equals(name, StringComparison.OrdinalIgnoreCase))) { Warn($"{mod.Name} already adds an animation called {name}."); return; }
+        byte[] data;
+        string how;
+        try
+        {
+            var (_, orig) = AssetIndex.Read(_game.Install, new[] { a }).Single();
+            if (dlg.FileName.EndsWith(".hcan", StringComparison.OrdinalIgnoreCase)) { data = File.ReadAllBytes(dlg.FileName); Eg2.Asura.Chunks.AnimClip.Parse(data); how = "raw clip"; }
+            else data = AnimationGltf.Import(orig, dlg.FileName, out how);
+        }
+        catch (Exception e) when (e is InvalidDataException or FormatException or IOException or System.Text.Json.JsonException
+                                    or IndexOutOfRangeException or ArgumentException or KeyNotFoundException or InvalidOperationException)
+        { Warn($"Couldn't use that file: {e.Message}"); return; }
+
+        if (ReferenceEquals(mod, _current)) CommitEditor();
+        var rel = Path.Combine("clips", name + ".hcan");
+        var dest = Path.Combine(ModPackage.AssetDir(mod), rel);
+        Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
+        File.WriteAllBytes(dest, data);
+        mod.NewClips.Add(new NewClip { Name = name, Source = rel, Note = $"from {Path.GetFileName(dlg.FileName)}, based on {a.Name}" });
+        bool swap = MessageBox.Show(this, $"Play {name} wherever the game plays {a.Name}? (Characters' animation sets, random picks and the animation logic.)\n\n" +
+                                          "No: it's added but nothing plays it until something names it.", Text, MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes;
+        if (swap) { mod.ClipSwaps.RemoveAll(s => s.From.Equals(a.Name, StringComparison.OrdinalIgnoreCase)); mod.ClipSwaps.Add(new ClipSwap { From = a.Name, To = name }); }
+        mod.Save();
+        if (ReferenceEquals(mod, _current)) ShowEditor();
+        Log($"{mod.Id}: new animation {name} from {dlg.FileName} ({how}){(swap ? $", playing in place of {a.Name}" : "")}");
+        _status.Text = $"\"{name}\" will be added by \"{mod.Name}\" when you apply{(swap ? $", in place of {a.Name}" : "")}.";
+    }
+
+    /// <summary>Every reference to the selected clip (anim sets, random picks, reflexes, animation logic) points at another one.</summary>
+    void SwapClip()
+    {
+        if (_game is null || Selected() is not [var a] || a.Kind != "Animation") { Warn("Select the animation to replace everywhere it plays."); return; }
+        if (Prompt($"Play which animation wherever {a.Name} plays? (A game animation's name, or a new one a mod adds.)", "") is not { Length: > 0 } to) return;
+        bool known = _assets?.Any(x => x.Kind == "Animation" && x.Name.Equals(to, StringComparison.OrdinalIgnoreCase)) == true
+                     || ModsInList().Any(m => m.NewClips.Any(c => c.Name.Equals(to, StringComparison.OrdinalIgnoreCase)));
+        if (!known) { Warn($"No game animation or mod's new animation is called {to}."); return; }
+        if (TargetMod() is not { } mod) return;
+        if (ReferenceEquals(mod, _current)) CommitEditor();
+        mod.ClipSwaps.RemoveAll(s => s.From.Equals(a.Name, StringComparison.OrdinalIgnoreCase));
+        mod.ClipSwaps.Add(new ClipSwap { From = a.Name, To = to });
+        mod.Save();
+        if (ReferenceEquals(mod, _current)) ShowEditor();
+        Log($"{mod.Id}: {a.Name} -> {to}");
+        _status.Text = $"\"{to}\" will play in place of \"{a.Name}\" when you apply \"{mod.Name}\".";
     }
 
     /// <summary>

@@ -9,7 +9,7 @@
 // * A worker thread reads eg2modkit.cfg (next to this DLL): each [section] names a byte
 //   pattern, how to get from the match to a value, and what to write. The DLL itself knows
 //   nothing about the game, so new tweaks are config-only. Meant for DATA (globals, struct
-//   fields); it never patches game code.
+//   fields); only kind = code_bytes entries change game code.
 // * Intro/outro videos (fmv\*.webm) go the same way; a 0-byte .asrpatch skips the video (the open fails as missing).
 // * Lair maps (Envs\BaseDefinitions\*.base) are read like saves, without the engine's .asrpatch lookup, so the
 //   exe's CreateFileA/W imports are pointed at wrappers that open <file>.asrpatch instead when ModKit installed one.
@@ -270,7 +270,8 @@ static bool Resolve(Entry& e, std::map<std::string, std::vector<uint8_t*>>& cach
         Log("[%s] id at %p (alt %p), table count %p cap %p values %p keys %p", e.name.c_str(), e.idPtr, e.altPtr, e.countPtr, e.capPtr, e.valsPtr, e.keysPtr);
         return true;
     }
-    if (!e.kind.empty()) { Log("[%s] unknown kind '%s' -- skipped", e.name.c_str(), e.kind.c_str()); e.failed = true; return true; }
+    if (e.kind == "code_bytes" && hits.size() != 1) { Log("[%s] pattern has %zu matches, need exactly 1 -- skipped", e.name.c_str(), hits.size()); e.failed = true; return true; }
+    if (!e.kind.empty() && e.kind != "code_bytes") { Log("[%s] unknown kind '%s' -- skipped", e.name.c_str(), e.kind.c_str()); e.failed = true; return true; }
     uint8_t* a = ResolveOne(e, hits[0]);
     for (auto h : hits)
         if (ResolveOne(e, h) != a) { Log("[%s] %zu matches resolve to different addresses -- skipped", e.name.c_str(), hits.size()); e.failed = true; return true; }
@@ -461,9 +462,26 @@ static uint8_t* TableRecord(Entry& e)
     return nullptr;
 }
 
+// kind = code_bytes: value = hex bytes written once over game code at the match + at (the pattern, matched exactly
+// once, pins the bytes replaced). The only entries that change code.
+static void ApplyCode(Entry& e)
+{
+    Pattern v = Parse(e.value.c_str());
+    std::vector<uint8_t> b(v.bytes.begin(), v.bytes.end());
+    uint8_t* a = e.resolved;
+    e.resolved = nullptr;                               // once
+    DWORD old;
+    if (b.empty() || !VirtualProtect(a, b.size(), PAGE_EXECUTE_READWRITE, &old)) { Log("[%s] cannot write code at %p", e.name.c_str(), a); return; }
+    memcpy(a, b.data(), b.size());
+    VirtualProtect(a, b.size(), old, &old);
+    FlushInstructionCache(GetCurrentProcess(), a, b.size());
+    Log("[%s] %zu code bytes written at %p (RVA %llx)", e.name.c_str(), b.size(), a, (unsigned long long)(a - (uint8_t*)GetModuleHandleW(nullptr)));
+}
+
 static void Apply(Entry& e)
 {
     if (e.kind == "hashmap_record") { if (e.resolved) ApplyRecord(e); return; }
+    if (e.kind == "code_bytes") { if (e.resolved) ApplyCode(e); return; }
     uint8_t* a = e.resolved;
     if (!a) return;
     if (e.kind == "table_lookup") {

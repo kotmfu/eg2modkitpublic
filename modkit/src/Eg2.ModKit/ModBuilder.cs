@@ -1042,7 +1042,11 @@ public static class ModBuilder
         var packages = costs.Select(e => game.FindFurniture(e.Name)!.Package).Concat(fields.Select(f => f.Package))
             .Concat(assetEdits.Where(x => contentOf.ContainsKey(Norm(x.A.File))).Select(x => contentOf[Norm(x.A.File)]))
             .Concat(r.PatchObjects.Keys).Concat(r.PatchTextures.Keys)
+            .Concat(mods.SelectMany(m => m.NewClips).Select(c => c.Package))
             .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        var newClips = mods.SelectMany(m => m.NewClips.Select(c => (Mod: m, Clip: c))).ToList();
+        foreach (var dup in newClips.GroupBy(x => x.Clip.Name, StringComparer.OrdinalIgnoreCase).Where(g => g.Count() > 1))
+            r.Errors.Add($"conflict: new clip {dup.Key} added by {string.Join(" and ", dup.Select(x => x.Mod.Id))}");
 
         int pn = 0;
         foreach (var name in packages)
@@ -1091,6 +1095,24 @@ public static class ModBuilder
             }
             var mineAssets = assetEdits.Where(x => AssetReplacement.Same(x.A.File, game.Install.Rel(pkg.ContentPath))).ToList();
             ApplyAssets(arc, mineAssets, r);
+            if (!r.Ok) return;
+            // new clips go after the package's own; the game finds them by KeyHash of the name
+            foreach (var (m, c) in newClips.Where(x => x.Clip.Package.Equals(name, StringComparison.OrdinalIgnoreCase)))
+            {
+                string where = $"{m.Id}: new clip {c.Name}";
+                if (c.Name.Length == 0 || c.Name.Any(ch => ch is < ' ' or > '~')) { r.Errors.Add($"{where}: the name must be plain ASCII"); continue; }
+                if (arc.Chunks.Any(x => x.Tag == "HCAN" && AssetIndex.NameOf("HCAN", x.Body).Equals(c.Name, StringComparison.OrdinalIgnoreCase)))
+                { r.Errors.Add($"{where}: {pkg.Name} already has a clip with that name"); continue; }
+                AnimClip clip;
+                try { clip = AnimClip.Parse(File.ReadAllBytes(Path.Combine(ModPackage.AssetDir(m), c.Source))); }
+                catch (Exception e) when (e is IOException or ArgumentException or IndexOutOfRangeException or InvalidDataException or FormatException || e.Message is "ver" or "pre" or "ev0" or "len")
+                { r.Errors.Add($"{where}: {c.Source} is not a clip ({e.Message})"); continue; }
+                clip.Name = c.Name;
+                clip.NameHash = TextTable.KeyHash(c.Name);
+                int at = arc.Chunks.FindLastIndex(x => x.Tag == "HCAN") + 1;
+                arc.Chunks.Insert(at > 0 ? at : arc.Chunks.Count, new Chunk("HCAN", clip.Encode()));
+                r.Report.Add($"{where}: added to {pkg.Name} ({clip.Dur:0.##} s, {clip.Bones} bones, from {c.Source})");
+            }
             if (!r.Ok) return;
             if (r.PatchTextures.TryGetValue(name, out var textures))
             {   // with the package's own textures (after its last RSCF), ahead of the objects that use them
@@ -1194,6 +1216,9 @@ public static class ModBuilder
                 catch (ArgumentException x) { r.Errors.Add($"{mod.Id}: map {group.Key}: {x.Message}"); }
             }
             if (!r.Ok) return;
+            // placed agents need a raid record each, or they turn unkillable when the game registers a raid of its own
+            try { if (Agents.AddRaidRecords(map) is > 0 and var n) r.Report.Add($"{group.Key}: world state with a raid record for {n} placed squad{(n == 1 ? "" : "s")}"); }
+            catch (Exception x) when (x is ArgumentException or InvalidDataException) { r.Errors.Add($"map {group.Key}: {x.Message}"); return; }
             var bytes = map.ToBytes();
             LairMap.Parse(bytes);   // must still read back
             r.Files[isNew ? group.Key : group.Key + GameInstall.PatchSuffix] = bytes;
@@ -1309,8 +1334,17 @@ public static class ModBuilder
         var own = mods.SelectMany(m => m.NewLairs.Select(n => (m, n))).Where(x => !x.n.KeepId && r.Files.ContainsKey($@"envs\basedefinitions\{x.n.Stem}.base")).ToList();
         string? probe = mods.Select(m => m.LairSettingsProbe).FirstOrDefault(p => p is not null);
         if (probe is not null) { LairSettingsProbe(game, probe, r); return; }
-        if (own.Count == 0) return;
-        log("lair settings: misc\\common.asr");
+        var treeEdits = mods.SelectMany(m => m.TreeEdits.Select(e => (Mod: m, Edit: e))).ToList();
+        foreach (var g in treeEdits.GroupBy(x => (Tree: x.Edit.Tree.ToLowerInvariant(), x.Edit.Step, What: x.Edit.Field ?? $"setting {x.Edit.Setting + 1}")).Where(g => g.Select(x => x.Edit.Value).Distinct().Count() > 1))
+            r.Errors.Add($"conflict: behaviour tree {g.Key.Tree} step {g.Key.Step} {g.Key.What} set by {string.Join(" and ", g.Select(x => x.Mod.Id).Distinct())} to different values");
+        var swaps = mods.SelectMany(m => m.ClipSwaps.Select(s => (Mod: m, Swap: s))).ToList();
+        foreach (var g in swaps.GroupBy(x => x.Swap.From, StringComparer.OrdinalIgnoreCase).Where(g => g.Select(x => x.Swap.To.ToLowerInvariant()).Distinct().Count() > 1))
+            r.Errors.Add($"conflict: clip {g.Key} swapped by {string.Join(" and ", g.Select(x => x.Mod.Id).Distinct())} to different clips");
+        var classTrees = mods.SelectMany(m => m.ClassTrees.Select(c => (Mod: m, Edit: c))).ToList();
+        foreach (var g in classTrees.GroupBy(x => x.Edit.Class.ToLowerInvariant()).Where(g => g.Select(x => x.Edit.Tree.ToLowerInvariant()).Distinct().Count() > 1))
+            r.Errors.Add($"conflict: class {g.Key} given different behaviour trees by {string.Join(" and ", g.Select(x => x.Mod.Id).Distinct())}");
+        if (own.Count == 0 && treeEdits.Count == 0 && swaps.Count == 0 && classTrees.Count == 0 || !r.Ok) return;
+        log("misc\\common.asr");
         var arc = AsuraArchive.Load(game.Install.Full(@"misc\common.asr"));
         foreach (var (mod, n) in own)
         {
@@ -1329,18 +1363,51 @@ public static class ModBuilder
             }
             r.Report.Add($"{where}: own lair settings {id:x8} (copy of {n.From}'s, in place of {dropped} test levels'), island envs\\{island}.*");
         }
+        if (treeEdits.Count > 0)
+        {
+            var axbt = arc.First("AXBT") ?? throw new InvalidOperationException("misc\\common.asr has no AXBT chunk (behaviour trees)");
+            foreach (var err in BehaviourTrees.Apply(axbt.Body, treeEdits.Select(x => x.Edit).DistinctBy(e => (e.Tree.ToLowerInvariant(), e.Step, e.Field ?? $"setting {e.Setting + 1}"))))
+                r.Errors.Add($"behaviour trees: {err}");
+            foreach (var (m, e) in treeEdits) r.Report.Add($"behaviour tree {e.Tree} step {e.Step} {e.Field ?? $"setting {e.Setting + 1}"} = {e.Value} ({m.Id})");
+        }
+        // clip swaps: the 4-byte name hash, in place (sizes never change, as this file needs)
+        foreach (var (m, s) in swaps.DistinctBy(x => x.Swap.From.ToLowerInvariant()))
+        {
+            uint from = TextTable.KeyHash(s.From), to = TextTable.KeyHash(s.To);
+            int n = 0;
+            foreach (var c in arc.Chunks.Where(c => c.Tag is "BLUE" or "CPAN" or "RFLX" or "AALG"))
+            {
+                var b = c.Body;
+                int hits = 0;
+                for (int i = 0; i + 4 <= b.Length; i++)
+                    if (Bytes.U32(b, i) == from) { Bytes.PutU32(b, i, to); hits++; i += 3; }
+                if (hits > 0) { c.Body = b; n += hits; }
+            }
+            if (n == 0) r.Errors.Add($"{m.Id}: clip swap {s.From} -> {s.To}: nothing in misc\\common.asr names {s.From}");
+            else r.Report.Add($"clip swap {s.From} -> {s.To}: {n} references ({m.Id})");
+        }
+        foreach (var (m, c) in classTrees.DistinctBy(x => x.Edit.Class.ToLowerInvariant()))
+        {
+            uint cls, tree;
+            try { cls = Convert.ToUInt32(c.Class, 16); tree = Convert.ToUInt32(c.Tree, 16); }
+            catch (FormatException) { r.Errors.Add($"{m.Id}: class tree {c.Class} -> {c.Tree}: not hex ids"); continue; }
+            int at = arc.Chunks.FindIndex(x => x.Tag == "BLUE" && Agents.WithDefaultTree(x.Body, cls, tree) is not null);
+            if (at < 0) { r.Errors.Add($"{m.Id}: class {c.Class}: not in misc\\common.asr, or it has no member that can carry a behaviour tree"); continue; }
+            arc.Chunks[at] = new Chunk("BLUE", Agents.WithDefaultTree(arc.Chunks[at].Body, cls, tree)!);
+            r.Report.Add($"class {c.Class} runs behaviour tree {c.Tree} ({m.Id})");
+        }
         if (!r.Ok) return;
         // Any misc\common.asr.asrpatch (even one byte-identical outside its first 2 MB block) loses the menu art: the game
         // treats that file specially. So the file stays, and the runtime DLL swaps in the changed compressed block (padded
         // to its old size) as the game reads it (kind = file_block).
         var orig = File.ReadAllBytes(game.Install.Full(@"misc\common.asr"));
-        if (AsuraArchive.ChangedBlocks(orig, arc.ToBytes(compressed: false)) is not { } blocks) { r.Errors.Add("lair settings: the changed part of misc\\common.asr doesn't re-compress into its old space"); return; }
+        if (AsuraArchive.ChangedBlocks(orig, arc.ToBytes(compressed: false)) is not { } blocks) { r.Errors.Add("misc\\common.asr: a changed part doesn't re-compress into its old space"); return; }
         foreach (var (offset, data) in blocks)
         {
             string rel = $@"{RuntimeBlocksDir}\common.asr.{offset}.bin";
             r.Files[rel] = data;
             r.FileBlocks.Add((@"misc\common.asr", offset, rel));
-            r.Report.Add($"lair settings: misc\\common.asr bytes {offset}..{offset + data.Length} swapped at run time ({rel})");
+            r.Report.Add($"misc\\common.asr bytes {offset}..{offset + data.Length} swapped at run time ({rel})");
         }
     }
 
@@ -1500,7 +1567,7 @@ public static class ModBuilder
     static string AddCharacters(LairMap map, MapEdit e)
     {
         int n = map.AddEntities((e.Template ?? "").Split(new[] { ' ', ',', '\n' }, StringSplitOptions.RemoveEmptyEntries).Select(Convert.FromHexString).ToList());
-        if (e.Squad is { Length: > 0 } sq) map.AddSquad(Convert.FromHexString(sq));
+        if (e.Squad is { Length: > 0 } sq) map.AddSquad(Agents.WithWave(Convert.FromHexString(sq), e.Wave));
         return $"{n} entities added{(e.Squad is { Length: > 0 } ? " + a squad" : "")}";
     }
 
@@ -1512,7 +1579,10 @@ public static class ModBuilder
         try
         {
             var v = (e.Vehicle ?? "0:0").Split(':');
-            return Agents.Place(map, Convert.FromHexString(parts[0]), Convert.FromHexString(parts[1]), Convert.FromHexString(e.Squad), e.X0, e.Y0, e.Floor,
+            var (ent, comp, squad) = Agents.WithClass(Convert.FromHexString(parts[0]), Convert.FromHexString(parts[1]), Agents.WithWave(Convert.FromHexString(e.Squad), e.Wave), e.Class);
+            if (e.Patrol is { Length: > 0 } route)
+                squad = Agents.WithPatrol(squad, map, route.Split(' ', StringSplitOptions.RemoveEmptyEntries).Select(x => Convert.ToUInt32(x, 16)).ToList(), (byte?)e.PatrolState);
+            return Agents.Place(map, Agents.WithTree(ent, e.Tree), comp, squad, e.X0, e.Y0, e.Floor,
                 Convert.ToUInt32(v[0], 16), Convert.ToUInt32(v[^1], 16), game is null ? new Dictionary<uint, uint>() : Agents.IslandVehicles(game, map.LairId));
         }
         catch (FormatException x) { throw new ArgumentException($"agent: {x.Message}"); }
@@ -1850,7 +1920,7 @@ public static class ModBuilder
             .DistinctBy(x => x.Patch.Name, StringComparer.OrdinalIgnoreCase).ToList();
         bool maps = mods.Any(m => m.MapEdits.Count > 0 || m.SkipVideos.Count > 0 || m.SceneryEdits.Count > 0 || m.NewLairs.Count > 0 || m.NewObjects.Any(o => o.Tag == "felr"));
         // the DLL redirects lair maps / videos to their .asrpatch; with new islands or lairs its log shows which lair loads
-        if (patches.Count == 0 && !maps) return;
+        if (patches.Count == 0 && !maps && r.FileBlocks.Count == 0) return;
         if (!File.Exists(RuntimeDll)) { r.Errors.Add($@"runtime DLL missing: {RuntimeDll} (an antivirus may have quarantined it; or run modkit\native\winmm\build.cmd, then rebuild ModKit)"); return; }
         if (Installer.Unreadable(RuntimeDll) is { } why) { r.Errors.Add("runtime DLL: " + why); return; }
         var cfg = new StringBuilder("# generated by Eg2 ModKit -- read by bin\\xinput1_4.dll at game start\n\n");
