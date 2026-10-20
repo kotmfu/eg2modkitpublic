@@ -100,6 +100,32 @@ sealed partial class MainForm : Form
             "Doomsday device firing levels: each device's test fires, levels 1-3 and final shot. \"Days the effect lasts\" matches the game's own descriptions; " +
             "the other numbers are still unconfirmed. Type a new value in \"Your value\", clear it to go back to the game's. Saved in the \"Quick tweaks\" mod.",
             QuickTweaks.Doomsday));
+        const string characterHint = "Values from the game's class tree. Only what a character sets itself can change here; what it inherits is listed above " +
+            "(change it on the entry it comes from, e.g. ★ All minions). Texts change everywhere the game shows them. \"Not confirmed\" and \"?\" are " +
+            "best guesses, \"Not decoded yet\" values are unknown. Ability buttons and looks are drop-downs; a weapon ability needs a look with matching " +
+            "animations. Class values (abilities, stats, pay, look) are read while the game runs, so existing saves pick them up (seen with a saved " +
+            "Jubei's ability button); traits are rolled when a minion is recruited, so trait changes need a new game. Voice lines: subtitles here, the " +
+            "recordings behind \"Hear or replace voice…\". Saved in the \"Quick tweaks\" mod.";
+        foreach (var (title, root, what) in new[] { ("Characters: Henchmen", Characters.Henchmen, "a henchman"), ("Characters: Geniuses", Characters.Geniuses, "a genius"),
+                                                   ("Characters: Minions", Characters.Minions, "a minion type"), ("Characters: Agents", Characters.Agents, "an agent type") })
+            _tabs.TabPages.Add(TweakGridPage(title, $"Pick {what} on the left: names, pay, stats, ability buttons, look and voice on the right. " + characterHint,
+                g => Characters.Page(g, root)));
+        foreach (var (title, tag, what) in new[]
+                 {
+                     ("Traits and powers", "rtrt", "a trait or power: its numbers (chances, amounts) and name"),
+                     ("Spoken lines", "rtsc", "a talking-head scene: who speaks and every line's subtitle"),
+                     ("Minion specialisations", "mtex", "a specialisation group: its names in the minion menu"),
+                     ("Jobs", "rjob", "a job: what doing it does to a minion's stats (+ restores, - drains)"),
+                     ("Super agencies", "rsbs", "a Force of Justice: names, agents and the loot you can steal"),
+                     ("Story chains", "rant", "a super agent or crime lord storyline: names, bios and status lines"),
+                     ("Scheme names", "rsdv", "a world-map scheme: its titles and descriptions"),
+                     ("Scheme rewards", "rscm", "a scheme's logic: costs and the numbers in its script (reward amounts, durations, counts)"),
+                     ("Regions", "rmlr", "a world-map region: its name and description"),
+                     ("Objectives", "robj", "an objective: title, description, tasks and completion message"),
+                 })
+            _tabs.TabPages.Add(TweakGridPage(title, $"Each entry on the left is {what}. Texts change everywhere the game shows them. Links and undecoded values are on " +
+                "Browse game data (Advanced). Saved in the \"Quick tweaks\" mod. \"New\" makes your own copy (★), saved in the mod changes go to; " +
+                "it shows in the game once something refers to it as @Name.", g => ObjectPages.Page(g, tag, Drafts()), copies: true));
         _tabs.TabPages.Add(_furniturePage = FurniturePage());
         _tabs.TabPages.Add(_treesPage = TreesPage());
         _tabs.TabPages.Add(_mapsPage = MapsPage());
@@ -175,9 +201,6 @@ sealed partial class MainForm : Form
         var classic = new CheckBox { Text = "Classic Windows look (takes effect next start)", AutoSize = true, Checked = _settings.ClassicLook };
         classic.CheckedChanged += (_, _) => { _settings.ClassicLook = classic.Checked; _settings.Save(); };
         t.Controls.Add(classic, 1, 5);
-        var advanced = new CheckBox { Text = "Show advanced tools (Browse game data, Game files: every object, texture and sound)", AutoSize = true, Checked = _settings.AdvancedTools };
-        advanced.CheckedChanged += (_, _) => { _settings.AdvancedTools = advanced.Checked; _settings.Save(); ShowAdvanced(advanced.Checked); };
-        t.Controls.Add(advanced, 1, 6);
 
         var diag = new GroupBox { Text = "Diagnostics", Dock = DockStyle.Top, Height = 110, Padding = new Padding(8) };
         diag.Controls.Add(Bar(
@@ -463,6 +486,12 @@ sealed partial class MainForm : Form
         CommitEditor();
         _current = mod;
         ShowEditor();
+        if (mod is not null && _tweakTargetId != mod.Id)
+        {
+            SaveSettingsPage(_tabs.SelectedTab);
+            _tweakTargetId = mod.Id;
+            FillEditing();
+        }
         UpdateTargets();
     }
 

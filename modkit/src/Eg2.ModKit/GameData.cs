@@ -30,6 +30,12 @@ public sealed class GameData
     /// <summary>Every data object and furniture record in every base package.</summary>
     public List<GameObject> Objects { get; } = new();
     public Dictionary<uint, List<GameObject>> ObjectsById { get; } = new();
+    /// <summary>misc\common.asr's class tree (characters, abilities, looks); empty if it couldn't be read.</summary>
+    public ClassIndex Classes { get; private set; } = ClassIndex.Empty;
+    /// <summary>Recorded dialogue by speaker folder (Data/Dialogue/Sounds/en/&lt;folder&gt;/&lt;line&gt;.wav): every streamed WAV name.</summary>
+    public Dictionary<string, List<string>> Voices { get; } = new(StringComparer.OrdinalIgnoreCase);
+    /// <summary>Sound sets, events and samples (misc\common.asr and the packages): which WAVs a body or animation plays.</summary>
+    public SoundIndex Sounds { get; } = new();
     /// <summary>Named assets inside the content packages (filled by Load). See <see cref="AllAssets"/> for the rest.</summary>
     public List<AssetEntry> PackageAssets { get; } = new();
     List<AssetEntry>? _allAssets;
@@ -84,6 +90,25 @@ public sealed class GameData
                     g.Text.TryAdd(e.Hash, new TextInfo(table, e.Key ?? "", e.Text));
         }
         log($"text: {g.Text.Count} entries in {g.TextTables.Count} tables ({lang})");
+        log(@"reading the class tree (misc\common.asr)");
+        try
+        {
+            var common = AsuraArchive.Load(install.Full(@"misc\common.asr")).Chunks;
+            g.Classes = ClassIndex.Load(common);
+            g.Sounds.Add(common);
+        }
+        catch (Exception e) when (e is IOException or InvalidDataException) { log($"class tree: {e.Message}"); }
+        foreach (var store in Directory.EnumerateFiles(install.Root, "*.pc.streamsounds", SearchOption.AllDirectories).Where(StreamSounds.IsStore))
+            try
+            {
+                foreach (var e in StreamSounds.ReadTable(store))
+                    if (e.Name.Split('/', '\\') is var parts && Array.FindIndex(parts, x => x.Equals("Dialogue", StringComparison.OrdinalIgnoreCase)) >= 0 && parts.Length >= 3)
+                    {
+                        if (!g.Voices.TryGetValue(parts[^2], out var lines)) g.Voices[parts[^2]] = lines = new();
+                        if (!lines.Contains(e.Name, StringComparer.OrdinalIgnoreCase)) lines.Add(e.Name);
+                    }
+            }
+            catch (Exception e) when (e is IOException or InvalidDataException) { log($"{install.Rel(store)}: {e.Message}"); }
 
         var packages = install.Packages().ToList();
         int n = 0;
@@ -116,6 +141,7 @@ public sealed class GameData
                 }
             }
             g.PackageAssets.AddRange(AssetIndex.FromChunks(install.Rel(p.ContentPath), arc.Chunks));
+            g.Sounds.Add(arc.Chunks);
             if (arc.First("MARE") is { } mare)
                 foreach (var r in Materials.Parse(mare.Body).Records) g.PackageMaterials.TryAdd(Bytes.U32(r, 0), r);
             var fntr = arc.First("fntr");

@@ -16,6 +16,11 @@ install.
 - **Make mods:** new furniture from existing items, costs and furniture
   effects, research numbers and research trees, text, lair maps and islands,
   and texture recolours.
+- **Simple mode:** pages by category (Henchmen, Geniuses, Minions, Agents,
+  Lair, Research, World & story, Doomsday). Each one lists things on the left
+  and shows their names, pay, stats, abilities, look, voice and combat sounds
+  on the right. Pick the mod you're saving into from the sidebar, or start a
+  new one. Advanced (the sidebar button) keeps every tool from before.
 - **Game files:** browse every sound, texture, mesh, animation and model in the
   game. You can extract them (WAV, PNG/DDS, OBJ), dump the lot in one go, or
   replace them with your own files.

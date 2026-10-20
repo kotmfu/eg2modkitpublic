@@ -50,7 +50,7 @@ sealed partial class MainForm
             Fill(j);
         }
         var ok = new Button { Text = "Save", DialogResult = DialogResult.OK, AutoSize = true };
-        var reset = new Button { Text = "Back to the game's", DialogResult = DialogResult.Abort, AutoSize = true };
+        var reset = new Button { Text = "Undo my changes", DialogResult = DialogResult.Abort, AutoSize = true };
         dlg.Controls.Add(list);
         dlg.Controls.Add(Hint("The objective's tasks in the order the game runs them; each starts its step (script) when it begins. " +
                               "Copied tasks bring their own text, conditions and step. Nothing is checked in-game: test story changes on a new save."));

@@ -159,12 +159,15 @@ public sealed class MapEdit
     public int Y1 { get; set; }
     public int Tier { get; set; }
     /// <summary>"tier" (default: set the rock tier), "dig" (dig out the rock), "gold" (rock -> gold seam), "wall" (rock ->
-    /// edge rock), "rock" (outside/edge/dug cells -> rock of <see cref="Tier"/>), "room" (dig out / change to <see cref="Room"/>), "remove" (the pre-placed objects whose
+    /// edge rock), "rock" (outside/edge/dug cells -> rock of <see cref="Tier"/>), "grow" (widen the lair by <see cref="Cells"/>), "room" (dig out / change to <see cref="Room"/>), "remove" (the pre-placed objects whose
     /// corner cell is in it) in the rectangle, or "place" (a copy
     /// of a pre-placed object: <see cref="Item"/> at column X0, row Y0), or "character" (experimental: the whole entities
     /// in <see cref="Template"/>, hex, space-separated, e.g. an agent copied from a save of the same lair), or "agent"
     /// (<see cref="Agents.Place"/>: Template = entity + companion, <see cref="Squad"/>, at column X0, row Y0).</summary>
     public string Action { get; set; } = "tier";
+    /// <summary>grow: how many cells to widen the diggable area by (outside and edge cells within the rectangle become
+    /// rock of <see cref="Tier"/>, default 4; the new outline is sealed with edge rock).</summary>
+    public int Cells { get; set; }
     /// <summary>room: the room to build (a <see cref="LairMap.Rooms"/> name, e.g. "Barracks"); rock and rooms in the
     /// rectangle become that room.</summary>
     public string? Room { get; set; }
@@ -197,6 +200,8 @@ public sealed class MapEdit
     /// member's state byte (Divers 8), optional.</summary>
     public string? Patrol { get; set; }
     public int? PatrolState { get; set; }
+    /// <summary>agent: zero the time values its squad brought from the save (<see cref="Agents.WithFreshTimers"/>).</summary>
+    public bool FreshTimers { get; set; }
     /// <summary>agent: the transport vehicle it came in, "id:type" hex (swapped for a same-type one on another island).</summary>
     public string? Vehicle { get; set; }
     public string? Note { get; set; }
@@ -311,6 +316,18 @@ public sealed class JobEdit
 {
     public string Object { get; set; } = "";
     public List<string> Types { get; set; } = new();
+    public string? Note { get; set; }
+}
+
+/// <summary>
+/// A trait (rtrt): Types = the full list of characters who may have it (empty = unchanged); SpawnChance = add an
+/// "On Spawn" roll (0-1) so those characters get it when they spawn. See <see cref="TraitOwners"/>.
+/// </summary>
+public sealed class TraitEdit
+{
+    public string Object { get; set; } = "";
+    public List<string> Types { get; set; } = new();
+    public float? SpawnChance { get; set; }
     public string? Note { get; set; }
 }
 
@@ -463,6 +480,16 @@ public sealed class ClassTree
     public string? Note { get; set; }
 }
 
+/// <summary>A value in a misc\common.asr class-tree (BLUE) object, e.g. a wave's timing. Object: hex id; Member: hex key or
+/// its name (KeyHash); Value: number, or hex for hash members. Only members the object sets itself. See <see cref="Blueprints"/>.</summary>
+public sealed class BlueEdit
+{
+    public string Object { get; set; } = "";
+    public string Member { get; set; } = "";
+    public string Value { get; set; } = "";
+    public string? Note { get; set; }
+}
+
 /// <summary>One mod = one JSON file in the mods folder.</summary>
 public sealed class ModDefinition
 {
@@ -512,12 +539,15 @@ public sealed class ModDefinition
     public List<MapEdit> MapEdits { get; set; } = new();
     public List<FurnitureShapeEdit> ShapeEdits { get; set; } = new();
     public List<JobEdit> JobEdits { get; set; } = new();
+    /// <summary>Who may have a trait (rtrt) and how they get it. See <see cref="TraitEdit"/>.</summary>
+    public List<TraitEdit> TraitOwnerEdits { get; set; } = new();
     public List<ListEdit> ListEdits { get; set; } = new();
     public List<GraphEdit> GraphEdits { get; set; } = new();
     public List<TreeEdit> TreeEdits { get; set; } = new();
     public List<NewClip> NewClips { get; set; } = new();
     public List<ClipSwap> ClipSwaps { get; set; } = new();
     public List<ClassTree> ClassTrees { get; set; } = new();
+    public List<BlueEdit> BlueEdits { get; set; } = new();
     [JsonIgnore] public string? FilePath { get; set; }
 
     public static ModDefinition Load(string path)

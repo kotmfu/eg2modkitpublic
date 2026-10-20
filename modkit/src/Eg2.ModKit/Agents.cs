@@ -216,6 +216,52 @@ public static class Agents
         return Bytes.Concat(entry[..9], p3eb.ToBytes());
     }
 
+    /// <summary>Every member record's cell ([u32 row][u32 floor][u32 column], 13 bytes into the record's tail) set to the
+    /// given one: the squad plans its members' walks from it (a placed agent kept its save's cell, and zoomed).</summary>
+    static byte[] WithMemberCells(byte[] entry, int row, int floor, int column)
+    {
+        var (p3eb, lists) = Parse(entry);
+        var mem = (RawNode)lists[0].Children[0];
+        var d = mem.Data;
+        foreach (var rec in Records(entry))
+        {
+            int at = rec.Start + 32;
+            at += 4 + 9 * (int)Bytes.U32(d, at);
+            if (Bytes.U32(d, at + 4) != 16) continue;
+            int cell = at + 8 + 4 * (int)Bytes.U32(d, at) + 13;
+            if (cell + 12 > rec.End) continue;
+            Bytes.PutU32(d, cell, (uint)row); Bytes.PutU32(d, cell + 4, (uint)floor); Bytes.PutU32(d, cell + 8, (uint)column);
+        }
+        return Bytes.Concat(entry[..9], p3eb.ToBytes());
+    }
+
+    /// <summary>
+    /// A one-member squad with the time values it brought from its save zeroed: prop 0x28's f32 after the target list
+    /// (time in the lair), the f32 and lair clock in its last raw ([2][1][f32][u32 clock]...), and in the member record the
+    /// counter (+28), the current targets (dropped), the two f32 after the target types and the [u32 1][f32][u32 clock]
+    /// at the record's end.
+    /// </summary>
+    public static byte[] WithFreshTimers(byte[] entry)
+    {
+        var (p3eb, lists) = Parse(entry);
+        var mem = (RawNode)lists[0].Children[0];
+        if (Bytes.U32(mem.Data, 0) != 1) throw new ArgumentException("fresh timers: the squad must have one member");
+        var rec = Records(entry)[0];
+        var d = mem.Data;
+        int cur = rec.Start + 32, n = (int)Bytes.U32(d, cur);
+        d = Bytes.Concat(d[..cur], Bytes.Le(0u), d[(cur + 4 + 9 * n)..]);
+        Bytes.PutU32(d, rec.Start + 28, 0);
+        int types = cur + 4, tail = types + 8 + 4 * (int)Bytes.U32(d, types);
+        if (Bytes.U32(d, types + 4) != 16 || tail + 37 > d.Length) throw new ArgumentException("fresh timers: the member record isn't the layout we know");
+        foreach (int at in new[] { 0, 4, 29, 33 }) Bytes.PutU32(d, tail + at, 0);
+        mem.Data = d;
+        var p28 = p3eb.Children.OfType<Prop>().First(p => p.Id == 0x28);
+        int i4 = p28.Children.FindIndex(c => c is Prop { Id: 4 });
+        if (p28.Children.ElementAtOrDefault(i4 + 1) is RawNode { Data.Length: 12 } t) Bytes.PutU32(t.Data, 0, 0);
+        if (p28.Children[^1] is RawNode { Data.Length: 29 } last && Bytes.U32(last.Data, 4) == 1) { Bytes.PutU32(last.Data, 8, 0); Bytes.PutU32(last.Data, 12, 0); }
+        return Bytes.Concat(entry[..9], p3eb.ToBytes());
+    }
+
     // ------------------------------------------------------------------ templates
 
     static List<Template>? _bundled, _saved;
@@ -489,6 +535,7 @@ public static class Agents
         float dx = row + 0.5f - x, dy = height - y, dz = column + 0.5f - z;
         int moved = Move(entity, x, y, z, dx, dy, dz) + Move(companion, x, y, z, dx, dy, dz);
         int cells = MoveCells(entity, (int)x, FloorOf(y), (int)z, row, floor, column) + MoveCells(companion, (int)x, FloorOf(y), (int)z, row, floor, column);
+        squad = WithMemberCells(squad, row, floor, column);
         map.AddEntities(new[] { entity, companion });
         map.AddSquad(squad);
         return $"agent placed at column {column}, row {row} (ids {next:x}..{next + 2:x}, {moved} positions, {cells} cells moved{ride})";

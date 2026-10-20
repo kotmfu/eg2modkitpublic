@@ -22,12 +22,17 @@ sealed partial class MainForm
     List<Skeleton>? _skeletons;
     HashSet<string> _replaced = new();
     string? _lastExtractDir;
+    /// <summary>Only these file names (a character's sounds); cleared when you search or pick a kind yourself.</summary>
+    HashSet<string>? _assetOnly;
+    string _assetOnlyFor = "";
+    bool _settingAssetFilter;
 
     TabPage AssetsPage()
     {
         _assetKind.Items.AddRange(new object[] { "All kinds", "Sound", "Streamed sound", "Texture", "Mesh", "Animation", "Animation (FAAN)", "Model", "Skeleton", "File" });
         _assetKind.SelectedIndex = 0;
-        _assetKind.SelectedIndexChanged += (_, _) => FilterAssets();
+        _assetKind.SelectedIndexChanged += (_, _) => { if (!_settingAssetFilter) _assetOnly = null; FilterAssets(); };
+        _assetSearch.TextChanged += (_, _) => { if (!_settingAssetFilter) _assetOnly = null; };
         Debounce(_assetSearch, FilterAssets);
         _assetList.MultiSelect = true;
         _assetList.SelectionChanged += (_, _) => ShowAsset();
@@ -96,11 +101,12 @@ sealed partial class MainForm
         _replaced = ModsInList().SelectMany(m => m.Assets).Select(a => AssetIndex.Key(a.File, a.Tag, a.Name, a.Occurrence)).ToHashSet();
         string kind = _assetKind.SelectedIndex > 0 ? (string)_assetKind.SelectedItem! : "";
         var words = _assetSearch.Text.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        var hits = _assets.Where(a => (kind.Length == 0 || a.Kind == kind)
+        var hits = _assets.Where(a => (kind.Length == 0 || a.Kind == kind) && (_assetOnly is null || _assetOnly.Contains(Path.GetFileName(a.Name)))
                                       && words.All(w => a.Name.Contains(w, StringComparison.OrdinalIgnoreCase) || a.File.Contains(w, StringComparison.OrdinalIgnoreCase)))
                           .ToList();
         _assetList.DataSource = hits.Take(MaxAssetRows).ToList();
-        _assetCount.Text = hits.Count > MaxAssetRows ? $"{hits.Count:N0} matches; showing the first {MaxAssetRows:N0}. Search to narrow it down." : $"{hits.Count:N0} matches.";
+        _assetCount.Text = (_assetOnly is null ? "" : $"{_assetOnlyFor}'s combat and body sounds (search or pick a kind to see everything again): ") +
+                           (hits.Count > MaxAssetRows ? $"{hits.Count:N0} matches; showing the first {MaxAssetRows:N0}. Search to narrow it down." : $"{hits.Count:N0} matches.");
     }
 
     List<AssetEntry> Selected() => _assetList.SelectedRows.Cast<DataGridViewRow>().Select(r => r.DataBoundItem).OfType<AssetEntry>().ToList();

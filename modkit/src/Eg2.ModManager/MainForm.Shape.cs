@@ -22,7 +22,7 @@ sealed partial class MainForm
         w.Enabled = h.Enabled = fp is not null;
         s.Enabled = slots > 0;
         var ok = new Button { Text = "Save", DialogResult = DialogResult.OK, AutoSize = true };
-        var reset = new Button { Text = "Back to the game's", DialogResult = DialogResult.Abort, AutoSize = true };
+        var reset = new Button { Text = "Undo my changes", DialogResult = DialogResult.Abort, AutoSize = true };
         var hint = Hint("");
         dlg.Controls.Add(hint);
         hint.Text = ($"Footprint in tiles (game: {(fp is { } f ? $"{f.W} x {f.H}" : "none")}); new tiles copy the nearest edge tile. The model isn't resized, " +
@@ -75,7 +75,7 @@ sealed partial class MainForm
         foreach (var r in rows) list.Items.Add(r.Label, current.Contains(r.Key));
         var users = _game.Objects.Where(x => x.IsRecord && x.Body.AsSpan().IndexOf(BitConverter.GetBytes(o.ObjectId)) >= 0).Select(x => x.Name.Split("  (")[^1].TrimEnd(')')).Distinct().ToList();
         var ok = new Button { Text = "Save", DialogResult = DialogResult.OK, AutoSize = true };
-        var reset = new Button { Text = "Back to the game's", DialogResult = DialogResult.Abort, AutoSize = true };
+        var reset = new Button { Text = "Undo my changes", DialogResult = DialogResult.Abort, AutoSize = true };
         dlg.Controls.Add(list);
         dlg.Controls.Add(Hint($"Ticked characters may do this job. It's shared by {users.Count} furniture item(s): {string.Join(", ", users.Take(6))}{(users.Count > 6 ? ", …" : "")}. " +
                               "A newly ticked type copies the job settings of the first listed one."));

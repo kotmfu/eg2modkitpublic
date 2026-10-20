@@ -5,10 +5,12 @@ namespace Eg2.ModManager;
 /// <summary>Own art: the textures of a new furniture item that has its own copy of the donor's model and material.</summary>
 sealed partial class MainForm
 {
-    async Task EditItemTextures()
+    async Task EditItemTextures(ModDefinition? forMod = null, NewFurniture? forItem = null)
     {
         CommitEditor();
-        if (_current is not { } mod || _newGrid.CurrentRow?.DataBoundItem is not NewFurniture item) { Warn("Select a new furniture item first."); return; }
+        var mod = forMod ?? _current;
+        var item = forItem ?? _newGrid.CurrentRow?.DataBoundItem as NewFurniture;
+        if (mod is null || item is null) { Warn("Select a new furniture item first."); return; }
         if (_game is not { } game) { Warn("Game data is still loading."); return; }
         FurnitureArt? art = null;
         if (!await Run($"Finding {item.Donor}'s textures", (log, ct) => art = FurnitureArt.ForItem(game, item.Donor, log, ct)) || art is null) return;

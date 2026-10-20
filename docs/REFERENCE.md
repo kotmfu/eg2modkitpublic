@@ -183,16 +183,20 @@ object keys take `[A-Za-z0-9_]`. Other edits name a new object as `"@Key"`.
 | `shapeEdits` | `name, width?, height?, slots?` | Furniture footprint and slot count |
 | `jobEdits` | `object, types[]` | Who may do a job |
 | `listEdits` | `package, tag, object, at, count, order[]` | Reordered, dropped or repeated list entries |
-| `mapEdits` | `file, floor, x0, y0, x1, y1, action, tier, room?, item?, facing?, template?, templateKey?, anyVersion, squad?, wave?, class?, tree?, patrol?, patrolState?, vehicle?` (`class`: the agent's character class, hex, in place of the template's at entity @56 and in its squad member records; `tree`: the behaviour tree it runs, hex, at entity @240 after a u32 999; 0xb37c4130 or 0x7448b8e2, a single `Idle` step, keeps it in place); `patrol`: grid object ids, hex, space-separated, written into its squad as the member's target furniture types and the squad's target list, with `patrolState` the member's state byte | `.base` patch |
+| `mapEdits` | `file, floor, x0, y0, x1, y1, action, tier, cells?, room?, item?, facing?, template?, templateKey?, anyVersion, squad?, wave?, class?, tree?, patrol?, patrolState?, vehicle?` (`class`: the agent's character class, hex, in place of the template's at entity @56 and in its squad member records; `tree`: the behaviour tree it runs, hex, at entity @240 after a u32 999; 0xb37c4130 or 0x7448b8e2, a single `Idle` step, keeps it in place); `patrol`: grid object ids, hex, space-separated, or a rectangle `column0,row0,column1,row1` (every object on the agent's floor with its corner inside), written into its squad as the member's target furniture types and the squad's target list, with `patrolState` the member's state byte | `.base` patch |
 | `sceneryEdits` | `file, group, groupName?, x0/z0/x1/z1?, action hide/move/copy/mesh, source?, dx, dy, dz` | `.pc` patch |
 | `newLairs` | `stem, from, region?, keepId, islandEdits[FieldEdit]` | New `envs\` files, plus a `common.asr` block when `keepId` is false |
 | `treeEdits` | `tree, step, setting, field?, value, expect, note?`: a behaviour tree value ([4.31](#431-behaviour-trees-axbt)) by tree hash and step index. `setting` picks a typed setting by 0-based position; `field` picks a plain field instead: `mode` (Serial 1-3, Parallel 0-3), `count` and `time` (Loop), `watch` and `compare` (conditions, 3 or 4) | Changed blocks of `misc\common.asr`, swapped in by the runtime DLL |
 | `newClips` | `name, package, source, note?`: an animation clip (`HCAN`, [4.36](#436-animation-and-skeletons)) under its own name; the build sets the clip's name and name hash | Added to `<package>_content.asr`; the game finds clips in any loaded package by `KeyHash` of the name |
 | `clipSwaps` | `from, to, note?`: every `KeyHash(from)` in `misc\common.asr` `BLUE`, `CPAN`, `RFLX` and `AALG` chunks becomes `KeyHash(to)` | Changed blocks of `misc\common.asr`, swapped in by the runtime DLL |
 | `classTrees` | `class, tree, note?` (hex ids): the class's `DefaultBT` (0xa6775653) in the `misc\common.asr` `BLUE` ActorBase tree. A class without its own `DefaultBT` takes over a 4-byte override member equal to its parent's value, so the chunk keeps its size. Characters store the tree they run (entity @240), so the class's tree reaches only characters that spawn after the change | Changed blocks of `misc\common.asr`, swapped in by the runtime DLL |
+| `blueEdits` | `object, member, value, note?`: one value in a `misc\common.asr` `BLUE` class-tree object ([4.25](#425-lair-settings-misccommonasr-blue-25-chunk-27) has the layout). `object` hex id; `member` hex key or its name (KeyHash); `value` a number, or hex for hash members. Only members the object sets itself; strings can't change | Changed blocks of `misc\common.asr`, swapped in by the runtime DLL |
 | `henchmanBarSlots` | Number, 6-100 (a value, not a list) | `gui\main.asr` patch: more squares in the HUD bar, plate widened 115 per extra slot |
 
-`MapEdit.action` takes `tier`, `dig`, `room`, `gold`, `wall`, `rock`, `remove`, `place`, `character` or `agent`.
+`MapEdit.action` takes `tier`, `dig`, `room`, `gold`, `wall`, `rock`, `grow`, `remove`, `place`, `character` or `agent`.
+`grow` widens the diggable area by `cells` (8-way steps from rock, rooms and seams through outside cells and the outer
+edge ring, inside the rectangle) as rock of `tier` (default 4) and seals the new outline with edge rock; edge walls
+inside the lair stay.
 X counts columns and Y counts rows.
 
 A `.eg2mod` is a zip holding `<id>.json` and a `<id>.assets/` folder.

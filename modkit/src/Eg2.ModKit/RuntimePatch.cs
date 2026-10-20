@@ -139,6 +139,16 @@ public static class RuntimePresets
              "Objectives screen (dx12 0x8614a7): GUI flag 'a side story is active' (GUI variable 0xc7bfa2ac) stays 0"),
     };
 
+    /// <summary>Auto-rebuild on for new items. The item setup (dx12 0x1405b9900) sets flag bit 0 of +0x120 (auto-rebuild,
+    /// toggled by the item panel button, GUI variable 0x88319ebd) only when the source word (+0x1b2) is 9 and the item
+    /// can auto-rebuild (0x1405df550, which also enables the button). The jne on the source goes, so every eligible item
+    /// starts on. Pattern unique in the dx12 image; vulkan not checked.</summary>
+    public static readonly IReadOnlyList<RuntimePatch> AutoRebuild = new[]
+    {
+        Code("autorebuild_default_on", "66 83 F9 09 75 10 48 8B CB E8 ?? ?? ?? ?? 84 C0 74 04 B0 01 EB 02 33 C0 80 A3 20 01 00 00 FE", 4, "90 90",
+             "Item setup (dx12 0x1405b99c9): auto-rebuild only for source 9 -> every item that can auto-rebuild"),
+    };
+
     public static readonly IReadOnlyList<RuntimePatch> All = new[]
     {
         new RuntimePatch { Name = "minion_hard_cap", Pattern = MinionCap, Rel = 2, Len = 6, Value = "1000",

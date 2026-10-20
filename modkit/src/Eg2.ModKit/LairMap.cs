@@ -282,6 +282,8 @@ public sealed class LairMap
 
     public const uint Outside = 0x430bd860, Edge = 0x0cf2f3d8, Spot = 0x48f218d8;
 
+    readonly Dictionary<uint, byte[]> _templates = new();
+
     /// <summary>A cell of <paramref name="type"/> from this map to copy (the most common length, so the usual form).</summary>
     Prop? TemplateCell(uint type) => Floors.SelectMany(f => f.Cells).Where(c => TypeOf(c) == type)
         .GroupBy(c => c.Payload().Length).MaxBy(g => g.Count())?.First();
@@ -291,8 +293,8 @@ public sealed class LairMap
     int Paint(int floor, int x0, int y0, int x1, int y1, uint type, Func<Prop, bool> which)
     {
         var f = Floors.FirstOrDefault(x => x.Index == floor) ?? throw new ArgumentException($"no floor {floor}");
-        var t = TemplateCell(type) ?? throw new ArgumentException($"this map has no {type:x8} cell to copy");
-        var tp = t.Payload();
+        if (!_templates.TryGetValue(type, out var tp))
+            _templates[type] = tp = (TemplateCell(type) ?? throw new ArgumentException($"this map has no {type:x8} cell to copy")).Payload().ToArray();
         int changed = 0;
         for (int y = Math.Max(0, y0); y <= Math.Min(f.Height - 1, y1); y++)
             for (int x = Math.Max(0, x0); x <= Math.Min(f.Width - 1, x1); x++)
@@ -324,6 +326,59 @@ public sealed class LairMap
         var to = Tiers.FirstOrDefault(t => t.Tier == tier);
         if (to.Tier == 0) throw new ArgumentException($"tier {tier}: must be 1-4");
         return Paint(floor, x0, y0, x1, y1, to.Type, c => TypeOf(c) is Outside or Edge or Spot || RoomName(TypeOf(c)) is not null);
+    }
+
+    /// <summary>Widen the diggable area by <paramref name="cells"/> (8-way steps out from rock, rooms and seams through
+    /// outside and edge cells, inside the rectangle) as tier rock, then seal the new outline with edge rock wherever it
+    /// meets outside. Returns the count of cells turned to rock.</summary>
+    public int Grow(int floor, int x0, int y0, int x1, int y1, int cells, int tier)
+    {
+        var f = Floors.FirstOrDefault(x => x.Index == floor) ?? throw new ArgumentException($"no floor {floor}");
+        var to = Tiers.FirstOrDefault(t => t.Tier == tier);
+        if (to.Tier == 0) throw new ArgumentException($"tier {tier}: must be 1-4");
+        if (cells < 1) throw new ArgumentException("grow: cells must be 1 or more");
+        x0 = Math.Max(0, x0); y0 = Math.Max(0, y0); x1 = Math.Min(f.Width - 1, x1); y1 = Math.Min(f.Height - 1, y1);
+        bool Is(int x, int y, uint t) => x >= 0 && y >= 0 && x < f.Width && y < f.Height && TypeOf(f.Cells[y * f.Width + x]) == t;
+        // outside, or the outer edge ring (touches outside); edge walls inside the lair (round the lift, sealed areas) stay
+        bool Open(int x, int y) => Is(x, y, Outside) || Is(x, y, Edge) && Enumerable.Range(-1, 3).Any(dy => Enumerable.Range(-1, 3).Any(dx => Is(x + dx, y + dy, Outside)));
+        var dist = new int[f.Width * f.Height];
+        Array.Fill(dist, -1);
+        var q = new Queue<(int X, int Y)>();
+        for (int y = 0; y < f.Height; y++)
+            for (int x = 0; x < f.Width; x++)
+            {
+                var c = f.Cells[y * f.Width + x];
+                if (TierOf(c) > 0 || TypeOf(c) == Spot || RoomName(TypeOf(c)) is not null) { dist[y * f.Width + x] = 0; q.Enqueue((x, y)); }
+            }
+        var grown = new List<(int X, int Y)>();
+        while (q.Count > 0)
+        {
+            var (x, y) = q.Dequeue();
+            int d = dist[y * f.Width + x];
+            if (d == cells) continue;
+            for (int dy = -1; dy <= 1; dy++)
+                for (int dx = -1; dx <= 1; dx++)
+                {
+                    int nx = x + dx, ny = y + dy;
+                    if (nx < x0 || ny < y0 || nx > x1 || ny > y1 || dist[ny * f.Width + nx] >= 0 || !Open(nx, ny)) continue;
+                    dist[ny * f.Width + nx] = d + 1;
+                    q.Enqueue((nx, ny));
+                    grown.Add((nx, ny));
+                }
+        }
+        foreach (var (x, y) in grown) Fill(floor, x, y, x, y, tier);
+        foreach (var (x, y) in grown)
+        {
+            bool rim = false;
+            for (int dy = -1; dy <= 1 && !rim; dy++)
+                for (int dx = -1; dx <= 1 && !rim; dx++)
+                {
+                    int nx = x + dx, ny = y + dy;
+                    rim = nx < 0 || ny < 0 || nx >= f.Width || ny >= f.Height || TypeOf(f.Cells[ny * f.Width + nx]) == Outside;
+                }
+            if (rim) Wall(floor, x, y, x, y);
+        }
+        return grown.Count;
     }
 
     /// <summary>Place a copy of <paramref name="template"/> (an object from any lair map, same item and facing) at

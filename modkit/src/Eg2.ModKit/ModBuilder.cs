@@ -529,7 +529,8 @@ public static class ModBuilder
         var schemes = mods.SelectMany(m => m.SchemeEdits.Where(x => !x.Object.StartsWith('@')).Select(x => (Mod: m, Edit: x))).ToList();
         var pools = mods.SelectMany(m => m.PoolEdits.Select(x => (Mod: m, Edit: x))).ToList();
         var shapes = mods.SelectMany(m => m.ShapeEdits.Select(x => (Mod: m, Edit: x))).Where(x => game.FindFurniture(x.Edit.Name) is { } f && ViaOverride(f.Package)).ToList();
-        var jobs = mods.SelectMany(m => m.JobEdits.Select(x => (Mod: m, Edit: x))).ToList();
+        var jobs = mods.SelectMany(m => m.JobEdits.Select(x => (Mod: m, x.Object, x.Types, Spawn: (float?)null, Tag: "rjob"))
+                                .Concat(m.TraitOwnerEdits.Select(x => (Mod: m, x.Object, x.Types, Spawn: x.SpawnChance, Tag: "rtrt")))).ToList();
         var lists = mods.SelectMany(m => m.ListEdits.Select(x => (Mod: m, Edit: x))).Where(x => ViaOverride(x.Edit.Package)).ToList();
         var graphEdits = mods.SelectMany(m => m.GraphEdits.Where(x => !x.Object.StartsWith('@')).Select(x => (Mod: m, Edit: x))).ToList();
         foreach (var x in mods.SelectMany(m => m.ShapeEdits.Select(e => (m, e))).Where(x => game.FindFurniture(x.e.Name) is null))
@@ -641,19 +642,33 @@ public static class ModBuilder
             }
             catch (InvalidOperationException ex) { r.Errors.Add($"{where}: {ex.Message}"); }
         }
-        foreach (var grp in jobs.GroupBy(x => x.Edit.Object.ToLowerInvariant()))
+        foreach (var grp in jobs.GroupBy(x => (x.Tag, Object: x.Object.ToLowerInvariant())))
         {
-            var src = game.Objects.FirstOrDefault(x => !x.IsRecord && x.Tag == "rjob" && Bytes.Hex(x.ObjectId).Equals(grp.Key, StringComparison.OrdinalIgnoreCase));
-            if (src is null) { r.Errors.Add($"{grp.First().Mod.Id}: job {grp.Key} not found"); continue; }
+            string what = grp.Key.Tag == "rjob" ? "job" : "trait";
+            var src = game.Objects.FirstOrDefault(x => !x.IsRecord && x.Tag == grp.Key.Tag && Bytes.Hex(x.ObjectId).Equals(grp.Key.Object, StringComparison.OrdinalIgnoreCase));
+            if (src is null) { r.Errors.Add($"{grp.First().Mod.Id}: {what} {grp.Key.Object} not found"); continue; }
             if (!ViaOverride(src.Package)) continue;
             string key = $"{src.Package}/{src.Tag}/{Bytes.Hex(src.ObjectId)}";
             var body = objects.TryGetValue(key, out var have) ? have.Body : (byte[])src.Body.Clone();
-            foreach (var (mod, e) in grp)
+            foreach (var (mod, obj, types, spawn, _) in grp)
             {
-                var keys = e.Types.Select(t => ResolveId(t, refs)).ToList();
-                if (keys.Any(k => k is null)) { r.Errors.Add($"{mod.Id}: job {e.Object}: types must be 0x... hashes"); continue; }
-                try { body = JobTypes.Write(body, keys.Select(k => k!.Value).ToList()); r.Report.Add($"{mod.Id}: job {src.Name}: {keys.Count} character types (override)"); }
-                catch (InvalidOperationException ex) { r.Errors.Add($"{mod.Id}: job {e.Object}: {ex.Message}"); }
+                var keys = types.Select(t => ResolveId(t, refs)).ToList();
+                if (keys.Any(k => k is null)) { r.Errors.Add($"{mod.Id}: {what} {obj}: types must be 0x... hashes"); continue; }
+                var list = keys.Select(k => k!.Value).ToList();
+                try
+                {
+                    if (grp.Key.Tag == "rjob" || list.Count > 0)
+                    {
+                        body = grp.Key.Tag == "rjob" ? JobTypes.Write(body, list) : TraitOwners.Write(body, list);
+                        r.Report.Add($"{mod.Id}: {what} {src.Name}: {keys.Count} character types (override)");
+                    }
+                    if (spawn is { } chance)
+                    {
+                        body = TraitOwners.AddSpawnRoll(body, chance);
+                        r.Report.Add($"{mod.Id}: {what} {src.Name}: earned on spawn, chance {chance} (override)");
+                    }
+                }
+                catch (InvalidOperationException ex) { r.Errors.Add($"{mod.Id}: {what} {obj}: {ex.Message}"); }
             }
             objects[key] = (src, body);
         }
@@ -1343,7 +1358,10 @@ public static class ModBuilder
         var classTrees = mods.SelectMany(m => m.ClassTrees.Select(c => (Mod: m, Edit: c))).ToList();
         foreach (var g in classTrees.GroupBy(x => x.Edit.Class.ToLowerInvariant()).Where(g => g.Select(x => x.Edit.Tree.ToLowerInvariant()).Distinct().Count() > 1))
             r.Errors.Add($"conflict: class {g.Key} given different behaviour trees by {string.Join(" and ", g.Select(x => x.Mod.Id).Distinct())}");
-        if (own.Count == 0 && treeEdits.Count == 0 && swaps.Count == 0 && classTrees.Count == 0 || !r.Ok) return;
+        var blueEdits = mods.SelectMany(m => m.BlueEdits.Select(e => (Mod: m, Edit: e))).ToList();
+        foreach (var g in blueEdits.GroupBy(x => (Obj: x.Edit.Object.ToLowerInvariant(), Key: BlueKey(x.Edit.Member))).Where(g => g.Select(x => x.Edit.Value).Distinct().Count() > 1))
+            r.Errors.Add($"conflict: class-tree object {g.Key.Obj} member {g.First().Edit.Member} set by {string.Join(" and ", g.Select(x => x.Mod.Id).Distinct())} to different values");
+        if (own.Count == 0 && treeEdits.Count == 0 && swaps.Count == 0 && classTrees.Count == 0 && blueEdits.Count == 0 || !r.Ok) return;
         log("misc\\common.asr");
         var arc = AsuraArchive.Load(game.Install.Full(@"misc\common.asr"));
         foreach (var (mod, n) in own)
@@ -1396,6 +1414,25 @@ public static class ModBuilder
             arc.Chunks[at] = new Chunk("BLUE", Agents.WithDefaultTree(arc.Chunks[at].Body, cls, tree)!);
             r.Report.Add($"class {c.Class} runs behaviour tree {c.Tree} ({m.Id})");
         }
+        foreach (var (m, e) in blueEdits.DistinctBy(x => (x.Edit.Object.ToLowerInvariant(), BlueKey(x.Edit.Member))))
+        {
+            uint obj;
+            try { obj = Convert.ToUInt32(e.Object, 16); }
+            catch (Exception x) when (x is FormatException or OverflowException or ArgumentException) { r.Errors.Add($"{m.Id}: class-tree edit {e.Object}: not a hex id"); continue; }
+            string? hit = null;
+            foreach (var c in arc.Chunks.Where(c => c.Tag == "BLUE"))
+            {
+                var b = c.Body;
+                string res = Blueprints.Set(b, obj, BlueKey(e.Member), e.Value);
+                if (res == "!no such object") continue;
+                hit = res;
+                if (!res.StartsWith('!')) c.Body = b;
+                break;
+            }
+            if (hit is null) r.Errors.Add($"{m.Id}: class-tree object {e.Object}: not in misc\\common.asr");
+            else if (hit.StartsWith('!')) r.Errors.Add($"{m.Id}: class-tree object {e.Object} member {e.Member}: {hit[1..]}");
+            else r.Report.Add($"class-tree {e.Object} {e.Member}: {hit} -> {e.Value} ({m.Id})");
+        }
         if (!r.Ok) return;
         // Any misc\common.asr.asrpatch (even one byte-identical outside its first 2 MB block) loses the menu art: the game
         // treats that file specially. So the file stays, and the runtime DLL swaps in the changed compressed block (padded
@@ -1410,6 +1447,9 @@ public static class ModBuilder
             r.Report.Add($"misc\\common.asr bytes {offset}..{offset + data.Length} swapped at run time ({rel})");
         }
     }
+
+    static uint BlueKey(string member) => member.StartsWith("0x", StringComparison.OrdinalIgnoreCase) && uint.TryParse(member[2..], System.Globalization.NumberStyles.HexNumber, null, out var k)
+        ? k : TextTable.KeyHash(member);
 
     /// <summary>ModDefinition.LairSettingsProbe: one run-time swap of common.asr's first compressed block (it holds the
     /// lair settings chunk): its own bytes, its content re-compressed, or one spare entry renamed.</summary>
@@ -1556,6 +1596,7 @@ public static class ModBuilder
             "gold" => $"{map.Gold(e.Floor, x0, y0, x1, y1)} rock cells -> gold seam",
             "wall" => $"{map.Wall(e.Floor, x0, y0, x1, y1)} rock cells -> edge rock",
             "rock" => $"{map.Fill(e.Floor, x0, y0, x1, y1, e.Tier == 0 ? 1 : e.Tier)} cells -> tier {(e.Tier == 0 ? 1 : e.Tier)} rock",
+            "grow" => $"{map.Grow(e.Floor, x0, y0, x1, y1, e.Cells, e.Tier == 0 ? 4 : e.Tier)} cells -> tier {(e.Tier == 0 ? 4 : e.Tier)} rock, {e.Cells} out from the lair, edge-sealed",
             "place" => Place(game, map, e),
             "remove" => RemoveObjects(map, e.Floor, x0, y0, x1, y1),
             "character" => AddCharacters(map, e),
@@ -1581,7 +1622,16 @@ public static class ModBuilder
             var v = (e.Vehicle ?? "0:0").Split(':');
             var (ent, comp, squad) = Agents.WithClass(Convert.FromHexString(parts[0]), Convert.FromHexString(parts[1]), Agents.WithWave(Convert.FromHexString(e.Squad), e.Wave), e.Class);
             if (e.Patrol is { Length: > 0 } route)
-                squad = Agents.WithPatrol(squad, map, route.Split(' ', StringSplitOptions.RemoveEmptyEntries).Select(x => Convert.ToUInt32(x, 16)).ToList(), (byte?)e.PatrolState);
+            {
+                // "column0,row0,column1,row1" = every object on the agent's floor with its corner in that rectangle; else object ids
+                var box = route.Split(',').Select(x => int.TryParse(x, out int v) ? v : -1).ToArray();
+                var ids = box.Length == 4 && box.All(v => v >= 0)
+                    ? map.Objects.Where(o => o.Floor == e.Floor && o.Column >= box[0] && o.Column <= box[2] && o.Row >= box[1] && o.Row <= box[3]).Select(o => o.Id).ToList()
+                    : route.Split(' ', StringSplitOptions.RemoveEmptyEntries).Select(x => Convert.ToUInt32(x, 16)).ToList();
+                if (ids.Count == 0) throw new ArgumentException($"patrol: no objects in {route}");
+                squad = Agents.WithPatrol(squad, map, ids, (byte?)e.PatrolState);
+            }
+            if (e.FreshTimers) squad = Agents.WithFreshTimers(squad);
             return Agents.Place(map, Agents.WithTree(ent, e.Tree), comp, squad, e.X0, e.Y0, e.Floor,
                 Convert.ToUInt32(v[0], 16), Convert.ToUInt32(v[^1], 16), game is null ? new Dictionary<uint, uint>() : Agents.IslandVehicles(game, map.LairId));
         }

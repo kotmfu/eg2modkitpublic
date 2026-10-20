@@ -77,7 +77,7 @@ sealed partial class MainForm
         table.RowStyles.Add(new RowStyle(SizeType.Percent, 50)); table.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
         table.Controls.Add(gm, 0, 0); table.Controls.Add(gc, 1, 0); table.Controls.Add(gf, 0, 1); table.Controls.Add(gu, 1, 1);
         var ok = new Button { Text = "Save", DialogResult = DialogResult.OK, AutoSize = true };
-        var reset = new Button { Text = "Back to the game's", DialogResult = DialogResult.Abort, AutoSize = true };
+        var reset = new Button { Text = "Undo my changes", DialogResult = DialogResult.Abort, AutoSize = true };
         dlg.Controls.Add(table);
         dlg.Controls.Add(Hint("Add a row at the bottom of a list, select a row and press Delete to remove it. " +
                               "Unlocks = furniture that becomes buildable when it's done (your new furniture is in the list too)."));

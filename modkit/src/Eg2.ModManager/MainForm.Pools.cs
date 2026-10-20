@@ -33,7 +33,7 @@ sealed partial class MainForm
         var list = new ListBox { Dock = DockStyle.Fill, IntegralHeight = false, HorizontalScrollbar = true };
         void Fill(int sel) { list.Items.Clear(); foreach (var r in cur) list.Items.Add(SchemeLabel(r, mod)); list.SelectedIndex = Math.Min(sel, list.Items.Count - 1); }
         var ok = new Button { Text = "Save", DialogResult = DialogResult.OK, AutoSize = true };
-        var reset = new Button { Text = "Back to the game's", DialogResult = DialogResult.Abort, AutoSize = true };
+        var reset = new Button { Text = "Undo my changes", DialogResult = DialogResult.Abort, AutoSize = true };
         dlg.Controls.Add(list);
         dlg.Controls.Add(Hint("The game picks one of these (each entry equally likely; a scheme listed twice is twice as likely) when it offers a " +
                               "new scheme from this pool. Already-offered schemes keep their old version."));

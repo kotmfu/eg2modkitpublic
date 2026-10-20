@@ -54,7 +54,7 @@ sealed partial class MainForm
             Btn("Icon of selected…", (_, _) => TreeNodeIcon()),
             Btn("Requirements of selected…", (_, _) => TreeNodeRequirements()),
             _treeBg,
-            Btn("Back to the game's layout", (_, _) => ResetTree()),
+            Btn("Undo my changes to this tree", (_, _) => ResetTree()),
             _treeOwner));
         page.Controls.Add(right);
         page.Controls.Add(new Splitter { Dock = DockStyle.Left });

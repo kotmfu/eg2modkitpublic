@@ -210,15 +210,13 @@ sealed partial class MainForm
     void UpdateTargets() =>
         _target.Text = _current is null ? "" : $"changes go to: {_current}";
 
-    /// <summary>The mod edits go into; offers to create one when none is selected.</summary>
+    /// <summary>The mod edits go into: the one picked under "Saving changes to" (the Quick tweaks mod, made on first use, when none is).</summary>
     ModDefinition? TargetMod()
     {
         if (_current is not null) return _current;
-        if (MessageBox.Show(this, "Changes are saved in a mod. Create a new mod called \"My changes\" for them?\n\n" +
-                                  "(To use an existing mod instead, select it on the Mods tab first.)", Text,
-                MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return null;
-        var mod = NewMod("my-changes", "My changes", select: false);
-        if (mod is not null) { _modList.SelectedItem = mod; SelectMod(mod); }
+        if ((TweaksMod() ?? NewTweaksMod()) is not { } mod) { Warn("Pick the mod to save into under \"Saving changes to\" in the sidebar."); return null; }
+        _modList.SelectedItem = mod;
+        FillEditing();
         return mod;
     }
 
@@ -352,22 +350,29 @@ sealed partial class MainForm
 
     void CopyAsNewObject()
     {
-        if (_shown is not GameObject { IsRecord: false, Draft: null } o || TargetMod() is not { } mod) return;
+        if (_shown is not GameObject { IsRecord: false, Draft: null } o || MakeCopy(o) is not ({ } mod, { } d)) return;
+        if (DraftObject(mod, d) is { } draft) Show(draft);
+        _status.Text = $"Made @{d.Key}. Change its texts and values here; it goes into the game when you apply.";
+    }
+
+    /// <summary>Asks for a name and adds a copy of <paramref name="o"/> to the mod changes go to; null if cancelled.</summary>
+    (ModDefinition Mod, NewObject Copy)? MakeCopy(GameObject o)
+    {
+        if (TargetMod() is not { } mod) return null;
         string suggested = new string(o.Name.Where(char.IsLetterOrDigit).Take(24).ToArray()) + "_Mod";
         string key = Interaction.InputBox(
             $"New {o.Tag} copied from {o.Name}.\n\nGive it a short name (letters, digits, _). Other edits refer to it as @Name, " +
             "e.g. type @Name as a research tree's value to put it in the tree.", Text, suggested).Trim();
-        if (key.Length == 0) return;
-        if (!System.Text.RegularExpressions.Regex.IsMatch(key, "^[A-Za-z0-9_]+$")) { Warn("Letters, digits and _ only."); return; }
-        if (mod.NewObjects.Any(x => x.Key.Equals(key, StringComparison.OrdinalIgnoreCase))) { Warn($"\"{mod.Name}\" already has a new object called {key}."); return; }
+        if (key.Length == 0) return null;
+        if (!System.Text.RegularExpressions.Regex.IsMatch(key, "^[A-Za-z0-9_]+$")) { Warn("Letters, digits and _ only."); return null; }
+        if (mod.NewObjects.Any(x => x.Key.Equals(key, StringComparison.OrdinalIgnoreCase))) { Warn($"\"{mod.Name}\" already has a new object called {key}."); return null; }
         if (ReferenceEquals(mod, _current)) CommitEditor();
         var d = new NewObject { Key = key, Package = o.Package, Tag = o.Tag, Source = o.Key, Note = $"copy of {o.Name}" };
         mod.NewObjects.Add(d);
         mod.Save();
         if (ReferenceEquals(mod, _current)) ShowEditor();
         Log($"{mod.Id}: new {o.Tag} @{key} (copy of {o.Name})");
-        if (DraftObject(mod, d) is { } draft) Show(draft);
-        _status.Text = $"Made @{key}. Change its texts and values here; it goes into the game when you apply.";
+        return (mod, d);
     }
 
     void EditDraftText()

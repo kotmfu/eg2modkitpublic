@@ -47,7 +47,7 @@ sealed partial class MainForm
         var heat = new TextBox { Width = 90, Text = (hit.e?.Heat ?? game.Heat).ToString(inv) };
         var expiry = new TextBox { Width = 90, Text = (hit.e?.Expiry ?? game.Expiry).ToString(inv) };
         var ok = new Button { Text = "Save", DialogResult = DialogResult.OK, AutoSize = true };
-        var reset = new Button { Text = "Back to the game's", DialogResult = DialogResult.Abort, AutoSize = true };
+        var reset = new Button { Text = "Undo my changes to this scheme", DialogResult = DialogResult.Abort, AutoSize = true };
         var split = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2, ColumnCount = 1 };
         split.RowStyles.Add(new RowStyle(SizeType.Percent, 65)); split.RowStyles.Add(new RowStyle(SizeType.Percent, 35));
         split.Controls.Add(grid, 0, 0); split.Controls.Add(costGrid, 0, 1);

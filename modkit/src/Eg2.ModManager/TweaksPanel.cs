@@ -54,6 +54,8 @@ sealed class TweaksPanel : FlowLayoutPanel
             }
         }
         if (footer is not null) Controls.Add(new Label { Text = footer, AutoSize = true, ForeColor = Theme.Muted, Margin = new Padding(0, 14, 0, 0) });
+        // AutoScroll stops at the last control and ignores the bottom padding: without this the last row ends under the status bar
+        Controls.Add(new Label { AutoSize = false, Width = 1, Height = 24, Margin = Padding.Empty });
         ResumeLayout();
         WrapHints();
     }

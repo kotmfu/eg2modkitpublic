@@ -13,6 +13,15 @@ sealed partial class MainForm
     readonly ListBox _furnList = new() { Dock = DockStyle.Fill, IntegralHeight = false };
     readonly Label _furnTitle = new() { Dock = DockStyle.Top, AutoSize = false, Height = 34, Font = new Font(SystemFonts.DefaultFont.FontFamily, 13f, FontStyle.Bold), Padding = new Padding(4, 6, 0, 0) };
     readonly Label _furnInfo = new() { Dock = DockStyle.Top, AutoSize = false, Height = 24, Padding = new Padding(4, 2, 0, 0) };
+    /// <summary>One of your new items (a copy of a game item) in the furniture list.</summary>
+    sealed record NewFurnItem(ModDefinition Mod, NewFurniture Item);
+    /// <summary>Buttons that change the selected game item; hidden for your new items (they'd change the original).</summary>
+    readonly List<Button> _furnGameOnly = new();
+    readonly List<Button> _furnNewOnly = new();
+    /// <summary>The selected item's model, beside the floor plan (loaded on "View 3D model", then remembered per item).</summary>
+    readonly ModelView _model = new() { Dock = DockStyle.Right, Width = 380, Visible = false };
+    readonly Dictionary<string, (AssetEntry Mesh, MeshGeometry Geometry)?> _models = new(StringComparer.OrdinalIgnoreCase);
+    Button _openObj = null!;
     readonly FloorPlan _plan = new() { Dock = DockStyle.Fill };
     readonly DataGridView _slotGrid = ReadOnlyGrid();
     readonly ToolTip _planTip = new();
@@ -123,8 +132,12 @@ sealed partial class MainForm
         left.Controls.Add(_furnList);
         left.Controls.Add(_furnFilter);
         _furnList.FormattingEnabled = true;
-        _furnList.Format += (_, e) => { if (e.ListItem is FurnitureRow r) e.Value = FurnLabel(r); };
-        _furnList.SelectedIndexChanged += (_, _) => ShowFurnitureItem(_furnList.SelectedItem as FurnitureRow);
+        _furnList.Format += (_, e) =>
+        {
+            if (e.ListItem is FurnitureRow r) e.Value = FurnLabel(r);
+            else if (e.ListItem is NewFurnItem n) e.Value = $"★ {n.Item.DisplayName}  (new)";
+        };
+        _furnList.SelectedIndexChanged += (_, _) => ShowSelectedFurniture();
         Debounce(_furnFilter, FillFurnitureList);
 
         var legend = Hint("Grey tiles: the item; dark: open floor inside it; brown: door; cyan stripes: keep clear (minions use it from there); " +
@@ -158,16 +171,27 @@ sealed partial class MainForm
         var shape = Btn("Size and slots…", (_, _) => { if (_furnObj is { } o) ShowShape(o); });
         var price = Btn("Change price…", (_, _) => { if (_furnList.SelectedItem is FurnitureRow r) ChangeFurniturePrice(r); });
         var job = Btn("Change job…", (_, _) => ChangeSlotJob());
-        var reset = Btn("Back to the game's", (_, _) => ResetFurnitureLayout());
+        var reset = Btn("Undo my layout changes", (_, _) => ResetFurnitureLayout());
+        var model = Btn("View 3D model", async (_, _) => await ViewFurnitureModel());
+        _openObj = Btn("Open in 3D Viewer", (_, _) => OpenFurnitureObj());
+        _openObj.Visible = false;
+        var add = Btn("New item from this…", (_, _) => NewFurnitureItem());
+        var edit = Btn("Name, price, description…", (_, _) => EditNewFurnitureItem());
+        var textures = Btn("Textures…", async (_, _) => { if (_furnList.SelectedItem is NewFurnItem n) await EditItemTextures(n.Mod, n.Item); });
+        var delete = Btn("Delete this item", (_, _) => DeleteNewFurnitureItem());
+        _furnGameOnly.AddRange(new[] { price, shape, who, job, reset });
+        _furnNewOnly.AddRange(new[] { edit, textures, delete });
+        foreach (var b in _furnNewOnly) b.Visible = false;
         _plan.MouseDown += PlanMouseDown;
         _plan.MouseMove += (_, e) => { if (_plan.Dragging >= 0) { _plan.DragTo = Snap(_plan.ToTile(e.Location)); _plan.Invalidate(); } };
         _plan.MouseUp += PlanMouseUp;
 
         var right = new Panel { Dock = DockStyle.Fill };
         right.Controls.Add(_plan);
+        right.Controls.Add(_model);
         right.Controls.Add(legend);
         right.Controls.Add(_slotGrid);
-        right.Controls.Add(Bar(price, shape, who, job, reset));
+        right.Controls.Add(Bar(price, shape, who, job, reset, edit, textures, delete, model, _openObj, add));
         right.Controls.Add(_furnInfo);
         right.Controls.Add(_furnTitle);
         right.Controls.Add(Hint("Everything about a piece of furniture: its floor plan, its job slots and which minions can use each one. " +
@@ -200,19 +224,39 @@ sealed partial class MainForm
     {
         if (_game is null) return;
         string q = _furnFilter.Text.Trim();
-        var keep = _furnList.SelectedItem as FurnitureRow;
+        var keep = _furnList.SelectedItem;
+        var mine = ModsInList().SelectMany(m => m.NewFurniture.Select(f => new NewFurnItem(m, f)))
+            .Where(n => q.Length == 0 || n.Item.Id.Contains(q, StringComparison.OrdinalIgnoreCase) || n.Item.DisplayName.Contains(q, StringComparison.OrdinalIgnoreCase))
+            .OrderBy(n => n.Item.DisplayName, StringComparer.OrdinalIgnoreCase).Cast<object>();
         var rows = _game.Furniture.Where(r => _settings.AdvancedTools || !r.Name.StartsWith("Benchmark", StringComparison.OrdinalIgnoreCase))
             .Where(r => q.Length == 0 || r.Name.Contains(q, StringComparison.OrdinalIgnoreCase) || r.DisplayName.Contains(q, StringComparison.OrdinalIgnoreCase))
-            .OrderBy(r => string.IsNullOrEmpty(r.DisplayName) ? 1 : 0).ThenBy(FurnLabel, StringComparer.OrdinalIgnoreCase).ToArray();
+            .OrderBy(r => string.IsNullOrEmpty(r.DisplayName) ? 1 : 0).ThenBy(FurnLabel, StringComparer.OrdinalIgnoreCase).Cast<object>();
+        var items = mine.Concat(rows).ToArray();
         _furnList.BeginUpdate();
         _furnList.Items.Clear();
-        _furnList.Items.AddRange(rows);
+        _furnList.Items.AddRange(items);
         _furnList.EndUpdate();
-        int at = keep is null ? -1 : Array.IndexOf(rows, keep);
-        _furnList.SelectedIndex = at >= 0 ? at : rows.Length > 0 ? 0 : -1;
+        int at = keep is null ? -1 : Array.IndexOf(items, keep);
+        _furnList.SelectedIndex = at >= 0 ? at : items.Length > 0 ? 0 : -1;
     }
 
     GameObject? JobObject(uint id) => _game?.ObjectsById.TryGetValue(id, out var l) == true ? l.FirstOrDefault() : null;
+
+    /// <summary>Record name whose model the selected entry shows (a new item shows its art source's).</summary>
+    string? SelectedModelItem() => _furnList.SelectedItem switch { FurnitureRow r => r.Name, NewFurnItem n => n.Item.ArtFrom ?? n.Item.Donor, _ => null };
+
+    void ShowSelectedFurniture()
+    {
+        ShowCachedModel();
+        bool mine = _furnList.SelectedItem is NewFurnItem;
+        foreach (var b in _furnGameOnly) b.Visible = !mine;
+        foreach (var b in _furnNewOnly) b.Visible = mine;
+        if (_furnList.SelectedItem is not NewFurnItem n) { ShowFurnitureItem(_furnList.SelectedItem as FurnitureRow); return; }
+        // a new item has the original's floor plan and slots; only its name, price, description and art are its own
+        ShowFurnitureItem(_game?.FindFurniture(n.Item.Donor));
+        _furnTitle.Text = $"★ {n.Item.DisplayName}";
+        _furnInfo.Text = $"Your new item in \"{n.Mod.Name}\" · copy of {n.Item.Donor} · price {n.Item.Cost:N0}{(n.Item.OwnArt ? " · own art" : "")} · floor plan and slots are the original's";
+    }
 
     void ShowFurnitureItem(FurnitureRow? r)
     {
@@ -411,5 +455,106 @@ sealed partial class MainForm
         if (_current is not null && holders.Contains(_current)) ShowEditor();
         ShowFurnitureItem(_furnList.SelectedItem as FurnitureRow);
         _status.Text = $"{_furnTitle.Text}: back to the game's layout.";
+    }
+
+    // ------------------------------------------------------------------ new items, 3D model
+
+    void NewFurnitureItem()
+    {
+        var row = _furnList.SelectedItem switch { FurnitureRow r => r, NewFurnItem n => _game?.FindFurniture(n.Item.Donor), _ => null };
+        if (row is null || TargetMod() is not { } mod) return;
+        var taken = new HashSet<string>(ModsInList().SelectMany(m => m.NewFurniture).Select(f => f.Id), StringComparer.OrdinalIgnoreCase);
+        string id = row.Name + "_Mod";
+        for (int i = 2; taken.Contains(id) || _game!.FindFurniture(id) is not null; i++) id = $"{row.Name}_Mod{i}";
+        string name = Microsoft.VisualBasic.Interaction.InputBox($"A new item that starts as a copy of {FurnLabel(row)}.\n\nIts name in the build menu:", Text,
+            (row.DisplayName.Length > 0 ? row.DisplayName : row.Name) + " (Mod)").Trim();
+        if (name.Length == 0) return;
+        if (ReferenceEquals(mod, _current)) CommitEditor();
+        var item = new NewFurniture { Id = id, Donor = row.Name, Cost = row.Cost ?? 0, DisplayName = name };
+        mod.NewFurniture.Add(item);
+        mod.Save();
+        if (ReferenceEquals(mod, _current)) ShowEditor();
+        Log($"{mod.Id}: new furniture {id} (copy of {row.Name})");
+        FillFurnitureList();
+        _furnList.SelectedItem = _furnList.Items.OfType<NewFurnItem>().FirstOrDefault(n => n.Item == item);
+        _status.Text = $"Made {name} in {mod.Name}. Set its price and description with \"Name, price, description…\"; install mods to see it in the build menu.";
+    }
+
+    void EditNewFurnitureItem()
+    {
+        if (_furnList.SelectedItem is not NewFurnItem n) return;
+        var it = n.Item;
+        string name = Microsoft.VisualBasic.Interaction.InputBox("Name in the build menu:", Text, it.DisplayName).Trim();
+        if (name.Length == 0) return;
+        string price = Microsoft.VisualBasic.Interaction.InputBox("Price (gold):", Text, it.Cost.ToString()).Trim();
+        if (!uint.TryParse(price, out uint cost)) { Warn("The price needs a whole number, 0 or more."); return; }
+        string desc = Microsoft.VisualBasic.Interaction.InputBox("Description (empty = the original's):", Text, it.Description ?? "");
+        if (ReferenceEquals(n.Mod, _current)) CommitEditor();
+        (it.DisplayName, it.Cost, it.Description) = (name, cost, desc.Trim().Length > 0 ? desc.Trim() : null);
+        n.Mod.Save();
+        if (ReferenceEquals(n.Mod, _current)) ShowEditor();
+        FillFurnitureList();
+    }
+
+    void DeleteNewFurnitureItem()
+    {
+        if (_furnList.SelectedItem is not NewFurnItem n) return;
+        if (MessageBox.Show(this, $"Delete {n.Item.DisplayName} from \"{n.Mod.Name}\"? Its own art and textures go too.", Text,
+                MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK) return;
+        if (ReferenceEquals(n.Mod, _current)) CommitEditor();
+        n.Mod.NewFurniture.Remove(n.Item);
+        n.Mod.Save();
+        if (ReferenceEquals(n.Mod, _current)) ShowEditor();
+        Log($"{n.Mod.Id}: deleted new furniture {n.Item.Id}");
+        FillFurnitureList();
+    }
+
+    /// <summary>Loads the item's model into the view beside the floor plan (a few seconds: reads its package); split or skinned
+    /// models with no single mesh show their parts in Game files instead.</summary>
+    async Task ViewFurnitureModel()
+    {
+        if (SelectedModelItem() is not { } item || _game is not { } game) return;
+        if (!_models.ContainsKey(item))
+        {
+            FurnitureArt? art = null;
+            if (!await Run($"Finding {item}'s model", (log, ct) => art = FurnitureArt.ForItem(game, item, log, ct)) || art is null) return;
+            if (art.Models.Count == 0) { Warn($"{item} has no model ModKit can find."); return; }
+            var file = game.Install.Rel(game.Install.Package(game.FindFurniture(item)!.Package)!.ContentPath);
+            var mesh = art.Models.SelectMany(m => game.PackageAssets.Where(a => a.Kind == "Mesh" && a.Tag == "RSCF" && a.Name.Equals(m.Name, StringComparison.OrdinalIgnoreCase)))
+                .OrderBy(a => a.File.Equals(file, StringComparison.OrdinalIgnoreCase) ? 0 : 1).FirstOrDefault();
+            if (mesh is null)
+            {
+                _models[item] = null;
+                _assetKind.SelectedIndex = 0;
+                _assetSearch.Text = art.Models[0].Name;
+                _tabs.SelectedTab = _assetsPage;
+                return;
+            }
+            try { _models[item] = (mesh, MeshGeometry.Parse(AssetIndex.Read(game.Install, new[] { mesh }).Single().Data)); }
+            catch (Exception e) when (e is InvalidDataException or IOException) { Warn($"Couldn't read the model: {e.Message}"); return; }
+        }
+        if (_models[item] is null) { Warn($"{item}'s model is in several parts; Game files shows them (search: its model name)."); return; }
+        ShowCachedModel();
+    }
+
+    void ShowCachedModel()
+    {
+        var hit = SelectedModelItem() is { } item && _models.TryGetValue(item, out var m) ? m : null;
+        if (hit is { } h) _model.SetMesh(h.Geometry, h.Mesh.Name);
+        _model.Visible = _openObj.Visible = hit is not null;
+    }
+
+    /// <summary>The loaded model as OBJ in whatever opens .obj files (Windows' 3D Viewer by default).</summary>
+    void OpenFurnitureObj()
+    {
+        if (SelectedModelItem() is not { } item || !_models.TryGetValue(item, out var m) || m is not { } h) return;
+        try
+        {
+            var dest = Path.Combine(Path.GetTempPath(), "Eg2ModKit", "preview", AssetIndex.OutputPath(h.Mesh));
+            Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
+            File.WriteAllText(dest, h.Geometry.ToObj(h.Mesh.Name));
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(dest) { UseShellExecute = true });
+        }
+        catch (Exception e) { Warn($"Couldn't open the model: {e.Message}"); }
     }
 }

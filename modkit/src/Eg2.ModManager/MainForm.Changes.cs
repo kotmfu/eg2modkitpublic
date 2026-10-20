@@ -141,6 +141,11 @@ sealed partial class MainForm
                 rows.Add(new ChangeRow("Who can do a job", RefName(e.Object), e.Note ?? string.Join(", ", e.Types)));
                 _changeActions.Add((() => OpenInBrowse(e.Object), () => m.JobEdits.Remove(e)));
             }
+            foreach (var e in m.TraitOwnerEdits)
+            {
+                rows.Add(new ChangeRow("Who has a trait", RefName(e.Object), e.Note ?? string.Join(", ", e.Types)));
+                _changeActions.Add((() => OpenInBrowse(e.Object), () => m.TraitOwnerEdits.Remove(e)));
+            }
             foreach (var e in m.ListEdits)
             {
                 rows.Add(new ChangeRow("List", e.Tag == "fntr" ? e.Object : RefName(e.Object), e.Note ?? $"list @{e.At}: {e.Count} -> {e.Order.Count} entries"));
@@ -170,6 +175,11 @@ sealed partial class MainForm
             {
                 rows.Add(new ChangeRow("Class behaviour", c.Class, c.Note ?? $"runs tree {c.Tree}"));
                 _changeActions.Add((() => Warn("Class behaviour trees are set in the mod's JSON (classTrees)."), () => m.ClassTrees.Remove(c)));
+            }
+            foreach (var e in m.BlueEdits)
+            {
+                rows.Add(new ChangeRow("Class-tree value", e.Object, $"{e.Member} = {e.Value}{(e.Note is null ? "" : $" ({e.Note})")}"));
+                _changeActions.Add((() => Warn("Class-tree values are set in the mod's JSON (blueEdits)."), () => m.BlueEdits.Remove(e)));
             }
             foreach (var e in m.TreeEdits)
             {

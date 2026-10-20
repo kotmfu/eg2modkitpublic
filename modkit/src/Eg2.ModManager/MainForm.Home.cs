@@ -33,16 +33,35 @@ sealed partial class MainForm
         Add(Heading("Make your own changes"));
         Add(Line("Every change is saved in a mod, so you can switch it off, share it or remove it later."));
         Add(Card("Quick tweaks", "Tick-box settings: minion limits, starting gold, skip the intro video…", _tweaksPage));
+        Add(Card("Henchmen", "Names, stats, ability buttons, look and voice of every henchman.", GridPage("Characters: Henchmen")));
+        Add(Card("Geniuses", "Each genius: new-game screen text, abilities, look and voice lines.", GridPage("Characters: Geniuses")));
+        Add(Card("Minion types", "Pay, stats, names and look of each minion type.", GridPage("Characters: Minions")));
+        Add(Card("Agents", "Every agent type, super agent and crime lord.", GridPage("Characters: Agents")));
         Add(Card("Research numbers", "How long each research takes, what it costs and what it gives.", GridPage("Research")));
+        Add(Card("Research trees", "Move research around, change what unlocks what, add new research.", _treesPage!));
         Add(Card("Furniture", "Floor plan, job slots and which minions can use each item; price, size and slot count.", _furniturePage));
         Add(Card("Furniture effects", "What using a piece of furniture does to a minion's stats.", GridPage("Furniture Effects")));
-        Add(Card("Research trees", "Move research around, change what unlocks what, add new research.", _treesPage!));
         Add(Card("Lair maps", "Dig out, fill in and furnish the underground lair of any island (new games).", _mapsPage!));
         Add(Card("Scenario", "Enemy agents waiting in a lair, guards that hold their ground, and the raid a new game opens with.", _scenarioPage!));
         Add(Card("Islands", "Hide, move or copy the scenery around an island, or make a new island.", _islandPage!));
+        Add(Card("Schemes", "World-map scheme names and descriptions; costs and rewards are next to them in the sidebar.", GridPage("Scheme names")));
+        Add(Card("Objectives", "Story and side objectives: titles, tasks and completion messages.", GridPage("Objectives")));
         Add(Card("My mods", "Your mods and everything each one changes: names, texts, prices, art, sounds.", _modsPage));
-        Add(Line("Browse game data and Game files (every object, texture and sound in the game) are under Settings → \"Show advanced tools\"."));
+        Add(Line("Browse game data and Game files (every object, texture and sound in the game) are in the Advanced sidebar: the button at its top."));
 
+        Add(BottomSpace());
+        // labels wrap to the page width: fixed widths made a horizontal scrollbar that hid the last line
+        body.Resize += (_, _) =>
+        {
+            int room = body.ClientSize.Width - body.Padding.Horizontal - SystemInformation.VerticalScrollBarWidth;
+            foreach (var step in body.Controls.OfType<TableLayoutPanel>().Where(t => t.ColumnCount == 3))
+                step.ColumnStyles[1].Width = Math.Clamp(room - 40 - 160, 200, 560);   // number | words | button, buttons lined up
+            foreach (var l in Descendants(body).OfType<Label>().Where(l => l.MaximumSize.Width > 0))
+            {
+                int x = body.PointToClient(l.Parent!.PointToScreen(l.Location)).X;
+                l.MaximumSize = new Size(Math.Max(160, Math.Min(820, body.ClientSize.Width - x - body.Padding.Right - SystemInformation.VerticalScrollBarWidth)), 0);
+            }
+        };
         var page = new TabPage("Home");
         page.Controls.Add(body);
         return page;
@@ -64,6 +83,8 @@ sealed partial class MainForm
         row.Controls.Add(b, 2, 0);
         return row;
     }
+
+    static IEnumerable<Control> Descendants(Control c) => c.Controls.Cast<Control>().SelectMany(x => Descendants(x).Prepend(x));
 
     Control Card(string title, string text, TabPage page)
     {

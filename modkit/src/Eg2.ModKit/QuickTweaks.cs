@@ -34,17 +34,47 @@ public sealed class Tweak
     public bool Shift { get; init; }
     /// <summary>A video under the game folder to skip (on/off).</summary>
     public string? Video { get; init; }
+    /// <summary>A class-tree value (Value = the game's); <see cref="BlueType"/>: u32, f32, u8 or hash.</summary>
+    public BlueEdit? Blue { get; init; }
+    public string BlueType { get; init; } = "";
+    /// <summary>A game text (Text = the game's).</summary>
+    public TextEdit? Text { get; init; }
+    /// <summary>Values offered in a drop-down (value, what it shows), instead of typing.</summary>
+    public IReadOnlyList<(string Value, string Label)>? Choices { get; init; }
+    /// <summary>Game files search that shows the recordings behind this row (voice lines), for a "Hear or replace voice" button.</summary>
+    public string? AssetSearch { get; init; }
+    /// <summary>WAV paths of the combat and body sounds the row's character plays (Game files shows them).</summary>
+    public IReadOnlyCollection<string>? SoundFiles { get; set; }
+    /// <summary>The data object the row belongs to (for New/Delete on a page); a copy has <see cref="GameObject.Draft"/>.</summary>
+    public GameObject? Object { get; init; }
+    /// <summary>A row of one of your copies (new objects): <see cref="Text"/> or <see cref="Field"/> say what, the value goes
+    /// into the copy (its texts by text-ref offset, its values as edits) in <see cref="DraftMod"/>, not the mod passed in.</summary>
+    public NewObject? Draft { get; init; }
+    public ModDefinition? DraftMod { get; init; }
+    public int DraftOffset { get; init; }
+    /// <summary>A scheme value kept as a <see cref="SchemeEdit"/> (Heat, Duration or Expiry) on <see cref="SchemeObject"/> ("0x…" or "@Key").</summary>
+    public string? SchemeField { get; init; }
+    public string? SchemeObject { get; init; }
 
-    public bool IsIn(ModDefinition m) => Video is not null ? m.SkipVideos.Contains(Video, StringComparer.OrdinalIgnoreCase)
+    public bool IsIn(ModDefinition m) => SchemeField is not null || Draft is not null ? ValueIn(m) is not null
+        : Video is not null ? m.SkipVideos.Contains(Video, StringComparer.OrdinalIgnoreCase)
+        : Blue is not null ? m.BlueEdits.Any(SameBlue)
+        : Text is not null ? m.TextEdits.Any(SameText)
         : Runtimes is not null ? m.Runtime.Any(InRuntimes)
         : Fields is not null ? m.FieldEdits.Any(Shift ? InSlots : InFields)
         : Runtime is not null
         ? m.Runtime.Any(r => r.Name.Equals(Runtime.Name, StringComparison.OrdinalIgnoreCase))
         : m.FieldEdits.Any(Same);
 
-    public string? ValueIn(ModDefinition m) => Shift
+    public string? ValueIn(ModDefinition m) => SchemeField is not null
+        ? SchemeValue(m.SchemeEdits.FirstOrDefault(SameScheme))?.ToString(System.Globalization.CultureInfo.InvariantCulture)
+        : Draft is not null
+        ? Text is not null ? Draft.Texts.FirstOrDefault(t => t.Offset == DraftOffset)?.Text : Draft.Edits.FirstOrDefault(e => e.Offset == DraftOffset)?.Value
+        : Shift
         ? Fields!.Select(f => (f, e: m.FieldEdits.FirstOrDefault(e => SameSlot(e, f)))).FirstOrDefault(x => x.e is not null) is ({ } f0, { } e0)
             ? (int.Parse(e0.Value) - int.Parse(f0.Value) + int.Parse(Default!)).ToString() : null
+        : Blue is not null ? m.BlueEdits.FirstOrDefault(SameBlue)?.Value
+        : Text is not null ? m.TextEdits.FirstOrDefault(SameText)?.Text
         : Video is not null || Fields is not null || Runtimes is not null ? (IsIn(m) ? "1" : null)
         : Runtime is not null
         ? m.Runtime.FirstOrDefault(r => r.Name.Equals(Runtime.Name, StringComparison.OrdinalIgnoreCase))?.Value
@@ -52,7 +82,22 @@ public sealed class Tweak
 
     public void Remove(ModDefinition m)
     {
-        if (Video is not null) m.SkipVideos.RemoveAll(v => v.Equals(Video, StringComparison.OrdinalIgnoreCase));
+        if (SchemeField is not null)
+        {
+            if (m.SchemeEdits.FirstOrDefault(SameScheme) is { } se)
+            {
+                SetScheme(se, null);
+                if (se is { Heat: null, Duration: null, Expiry: null, Minions: null, Costs: null }) m.SchemeEdits.Remove(se);
+            }
+        }
+        else if (Draft is not null)
+        {
+            Draft.Texts.RemoveAll(t => t.Offset == DraftOffset);
+            Draft.Edits.RemoveAll(e => e.Offset == DraftOffset);
+        }
+        else if (Video is not null) m.SkipVideos.RemoveAll(v => v.Equals(Video, StringComparison.OrdinalIgnoreCase));
+        else if (Blue is not null) m.BlueEdits.RemoveAll(SameBlue);
+        else if (Text is not null) m.TextEdits.RemoveAll(SameText);
         else if (Runtime is not null) m.Runtime.RemoveAll(r => r.Name.Equals(Runtime.Name, StringComparison.OrdinalIgnoreCase));
         else if (Runtimes is not null) m.Runtime.RemoveAll(InRuntimes);
         else if (Fields is not null) m.FieldEdits.RemoveAll(Shift ? InSlots : InFields);
@@ -78,7 +123,20 @@ public sealed class Tweak
     public void Set(ModDefinition m, string value)
     {
         Remove(m);
-        if (Video is not null) m.SkipVideos.Add(Video);
+        if (SchemeField is not null)
+        {
+            var se = m.SchemeEdits.FirstOrDefault(SameScheme);
+            if (se is null) m.SchemeEdits.Add(se = new SchemeEdit { Object = SchemeObject!, Note = Group });
+            SetScheme(se, float.Parse(value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture));
+        }
+        else if (Draft is not null)
+        {
+            if (Text is not null) Draft.Texts.Add(new NewObjectText { Offset = DraftOffset, Text = value });
+            else Draft.Edits.Add(Copy(Field!, value));
+        }
+        else if (Video is not null) m.SkipVideos.Add(Video);
+        else if (Blue is not null) m.BlueEdits.Add(new BlueEdit { Object = Blue.Object, Member = Blue.Member, Value = value, Note = $"{Group}: {Label}" });
+        else if (Text is not null) m.TextEdits.Add(new TextEdit { Table = Text.Table, Key = Text.Key, Text = value });
         else if (Runtime is not null) { var r = Runtime.Copy(); r.Value = value; m.Runtime.Add(r); }
         else if (Runtimes is not null) m.Runtime.AddRange(Runtimes.Select(r => r.Copy()));
         else if (Fields is not null)
@@ -99,6 +157,16 @@ public sealed class Tweak
         Expect = f.Expect, Note = f.Note, Value = value,
     };
 
+    bool SameScheme(SchemeEdit e) => e.Object.Equals(SchemeObject, StringComparison.OrdinalIgnoreCase);
+    float? SchemeValue(SchemeEdit? e) => SchemeField switch { "Heat" => e?.Heat, "Duration" => e?.Duration, _ => e?.Expiry };
+    void SetScheme(SchemeEdit e, float? v)
+    {
+        if (SchemeField == "Heat") e.Heat = v;
+        else if (SchemeField == "Duration") e.Duration = v;
+        else e.Expiry = v;
+    }
+    bool SameBlue(BlueEdit e) => e.Object.Equals(Blue!.Object, StringComparison.OrdinalIgnoreCase) && e.Member.Equals(Blue.Member, StringComparison.OrdinalIgnoreCase);
+    bool SameText(TextEdit e) => e.Table.Equals(Text!.Table, StringComparison.OrdinalIgnoreCase) && e.Key == Text.Key;
     static bool SameSlot(FieldEdit e, FieldEdit f) => e.Package == f.Package && e.Tag == f.Tag && e.Object == f.Object && e.Offset == f.Offset;
     bool Same(FieldEdit e) => Field is { } f && SameSlot(e, f);
     /// <summary>One of this switch's own edits (same slot and preset value), so switching off keeps manual values there.</summary>
@@ -118,7 +186,7 @@ public static class QuickTweaks
         ["gold_capacity"] = ("Gold", "Starting gold capacity", "Gold you can hold before building vaults (vaults add to it); earnings above the cap are lost.", "40000", false),
         ["unlimited_gold"] = ("Gold", "Unlimited gold", "Developer switch: spending no longer takes gold away (it doesn't add any).", "off", true),
         ["instant_minion_training"] = ("Developer switches", "Instant minion training", "", "off", true),
-        ["freeze_minion_stats"] = ("Developer switches", "Freeze minion stats", "", "off", true),
+        ["freeze_minion_stats"] = ("Developer switches", "Freeze minion stats", "Freezes every stat change, health included: nobody (minions, henchmen, agents) can be hurt or killed.", "off", true),
         ["unlock_all"] = ("Developer switches", "Unlock everything (experimental)", "Untested; use a throwaway save.", "off", true),
         ["default_base_power"] = ("Developer switches", "Base power", "Same units as the power shown in game. Read from the game: 1000000.", "1000000", false),
         ["minimum_power"] = ("Developer switches", "Minimum power", "Read from the game: -9999.", "-9999", false),
@@ -141,6 +209,8 @@ public static class QuickTweaks
                              Help = "The studio logo video at launch (runs with the game)." });
         list.Add(new Tweak { Key = "side_stories_at_once", Group = "Objectives", Label = "Several side stories at once", Default = "off", IsFlag = true, Runtimes = RuntimePresets.SideStories,
                              Help = "Start or resume a side story while another one runs (changes game code while the game runs). A save with several running may need this kept on." });
+        list.Add(new Tweak { Key = "autorebuild_default_on", Group = "Items", Label = "Auto-rebuild on for new items", Default = "off", IsFlag = true, Runtimes = RuntimePresets.AutoRebuild,
+                             Help = "Items you build start with the item panel's auto-rebuild button on, when the item can auto-rebuild (changes game code while the game runs)." });
         if (game is null) return list;
 
         // "Minion Cap Increase 1..5" research: the Increase node's Value (10/15/20/25/30 in the base game)
@@ -391,7 +461,7 @@ public static class QuickTweaks
         return list;
     }
 
-    static Tweak FieldTweak(GameObject o, string group,string label, int offset, string type, string value, string help = "") => new()
+    internal static Tweak FieldTweak(GameObject o, string group,string label, int offset, string type, string value, string help = "") => new()
     {
         Key = $"{o.Package}:{o.Tag}:{o.Key}:{offset}", Group = group, Label = label, Help = help, Default = value,
         Min = type == "u32" ? 0 : -10_000_000,
