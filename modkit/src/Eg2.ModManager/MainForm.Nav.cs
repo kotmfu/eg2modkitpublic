@@ -68,7 +68,8 @@ sealed partial class MainForm
         _nav.Controls.Add(_newModBtn);
 
         Group("Start", (_homePage, "Home"));
-        Group("Play", (_tweaksPage, "Quick tweaks"), (_applyPage, "Install mods"));
+        if (advanced) Group("Play", (_tweaksPage, "Quick tweaks"), (_applyPage, "Install mods"));
+        else Group("Play", (_tweaksPage, "Quick tweaks"), (_applyPage, "Install mods"), (_modsPage, "My mods"));
         if (advanced)
         {
             Group("Make a mod", (_modsPage, "My mods"), (GridPage("Research"), "Research numbers"),
@@ -90,7 +91,6 @@ sealed partial class MainForm
             Group("World & story", (_scenarioPage!, "Scenario"), (GridPage("Scheme names"), "Schemes"),
                   (GridPage("Scheme rewards"), "Scheme rewards"), (GridPage("Regions"), "Regions"), (GridPage("Objectives"), "Objectives"));
             Group("Doomsday", (GridPage("Doomsday"), "Doomsday devices"));
-            Group("Your mods", (_modsPage, "My mods"));
         }
         Group("", (_settingsPage, "Settings"));
         _nav.Controls.Add(BottomSpace());
